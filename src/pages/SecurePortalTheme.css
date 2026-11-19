@@ -1,0 +1,423 @@
+/* Portal dark mode aligned with the main Jaystarbliss Studios design system. */
+.jdh-portal.dark,
+.dark .jdh-portal {
+  --bg: transparent;
+  --surface: #111827;
+  --surf2: #1E293B;
+  --border: rgba(148, 163, 184, 0.20);
+  --border2: rgba(148, 163, 184, 0.32);
+  --text: #F8FAFC;
+  --text-dim: #CBD5E1;
+  --muted: #94A3B8;
+  --dim: #64748B;
+  --link: #F87171;
+  --cr: #B91C1C;
+  background: transparent;
+}
+
+.jdh-portal.dark::after,
+.dark .jdh-portal::after {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.055) 1px, transparent 1px);
+}
+
+.jdh-portal.dark::before,
+.dark .jdh-portal::before {
+  background:
+    radial-gradient(ellipse 80% 55% at 50% 82%, rgba(51, 65, 85, 0.42) 0%, rgba(30, 41, 59, 0.22) 48%, transparent 76%),
+    radial-gradient(ellipse 55% 45% at 18% 18%, rgba(71, 85, 105, 0.18) 0%, transparent 68%);
+}
+
+.jdh-portal.dark .scanlines,
+.dark .jdh-portal .scanlines {
+  background: linear-gradient(rgba(15, 23, 42, 0) 50%, rgba(15, 23, 42, 0.18) 50%);
+  opacity: 0.16;
+}
+
+.jdh-portal.dark .card:not(.glass-modal-card),
+.dark .jdh-portal .card:not(.glass-modal-card) {
+  background: rgba(15, 23, 42, 0.90);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-color: rgba(148, 163, 184, 0.28);
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.12), 0 32px 90px rgba(2, 6, 23, 0.75);
+}
+
+.jdh-portal.dark .card.glass-modal-card,
+.dark .jdh-portal .card.glass-modal-card {
+  background: rgba(255, 255, 255, 0.03) !important;
+  backdrop-filter: blur(8px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(140%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.35) !important;
+}
+
+.jdh-portal.dark .deco-panel,
+.dark .jdh-portal .deco-panel {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.82) 0%, rgba(23, 32, 51, 0.88) 48%, rgba(30, 41, 59, 0.92) 100%);
+  border-right-color: rgba(148, 163, 184, 0.22);
+}
+
+/* The animated canvas remains an accent, while the site palette provides the base. */
+.jdh-portal.dark .deco-panel > canvas,
+.dark .jdh-portal .deco-panel > canvas {
+  opacity: 0.45;
+  filter: saturate(0.65) brightness(1.1);
+}
+
+.jdh-portal.dark .form-panel,
+.dark .jdh-portal .form-panel {
+  background: rgba(15, 23, 42, 0.92);
+}
+
+.jdh-portal.dark .role-tabs,
+.dark .jdh-portal .role-tabs {
+  background: #111827;
+  border-bottom-color: var(--border);
+}
+
+.jdh-portal.dark .role-tab,
+.dark .jdh-portal .role-tab {
+  color: #CBD5E1;
+}
+
+.jdh-portal.dark .role-tab:hover,
+.dark .jdh-portal .role-tab:hover {
+  color: #F8FAFC;
+  background: rgba(51, 65, 85, 0.48);
+}
+
+.jdh-portal.dark .role-tab.active,
+.dark .jdh-portal .role-tab.active {
+  color: #F8FAFC;
+  border-bottom-color: #B91C1C;
+  background: rgba(51, 65, 85, 0.55);
+}
+
+.jdh-portal.dark .role-tab.active .tab-ico,
+.dark .jdh-portal .role-tab.active .tab-ico {
+  color: #F87171;
+}
+
+.jdh-portal.dark .form-title,
+.dark .jdh-portal .form-title {
+  color: #F8FAFC;
+}
+
+.jdh-portal.dark .form-title em,
+.dark .jdh-portal .form-title em {
+  color: #F87171;
+  text-shadow: none;
+}
+
+.jdh-portal.dark .form-sub,
+.dark .jdh-portal .form-sub {
+  color: #CBD5E1;
+  opacity: 1;
+}
+
+.jdh-portal.dark .field label,
+.dark .jdh-portal .field label {
+  color: #CBD5E1;
+}
+
+.jdh-portal.dark .input-icon,
+.dark .jdh-portal .input-icon {
+  color: #94A3B8;
+}
+
+.jdh-portal.dark .field input,
+.dark .jdh-portal .field input {
+  background: #1E293B;
+  border-color: rgba(148, 163, 184, 0.24);
+  color: #F8FAFC;
+  box-shadow: inset 0 1px 3px rgba(2, 6, 23, 0.30);
+}
+
+.jdh-portal.dark .field input:focus,
+.dark .jdh-portal .field input:focus {
+  border-color: #B91C1C !important;
+  box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.14), inset 0 1px 3px rgba(2, 6, 23, 0.24) !important;
+  background: #243247;
+}
+
+.jdh-portal.dark .field input::placeholder,
+.dark .jdh-portal .field input::placeholder {
+  color: #94A3B8;
+}
+
+.jdh-portal.dark .pw-eye,
+.dark .jdh-portal .pw-eye {
+  color: #CBD5E1;
+}
+
+.jdh-portal.dark .pw-eye:hover,
+.dark .jdh-portal .pw-eye:hover {
+  color: #F87171;
+}
+
+.jdh-portal.dark .auth-divider,
+.dark .jdh-portal .auth-divider {
+  color: #94A3B8;
+}
+
+.jdh-portal.dark .auth-divider::before,
+.jdh-portal.dark .auth-divider::after,
+.dark .jdh-portal .auth-divider::before,
+.dark .jdh-portal .auth-divider::after {
+  background: rgba(148, 163, 184, 0.20);
+}
+
+.jdh-portal.dark .toggle-link,
+.dark .jdh-portal .toggle-link {
+  color: #94A3B8;
+}
+
+.jdh-portal.dark .toggle-link a,
+.dark .jdh-portal .toggle-link a {
+  color: #F87171;
+  text-shadow: none;
+}
+
+.jdh-portal.dark .toggle-link a:hover,
+.dark .jdh-portal .toggle-link a:hover {
+  color: #FCA5A5;
+}
+
+.jdh-portal.dark .form-foot,
+.dark .jdh-portal .form-foot {
+  background: #111827;
+  border-top-color: var(--border);
+}
+
+.jdh-portal.dark .back-link,
+.dark .jdh-portal .back-link {
+  color: #CBD5E1;
+}
+
+.jdh-portal.dark .back-link:hover,
+.dark .jdh-portal .back-link:hover {
+  color: #F8FAFC;
+  background: rgba(51, 65, 85, 0.55);
+}
+
+.jdh-portal.dark .theme-btn,
+.dark .jdh-portal .theme-btn {
+  background: #1E293B;
+  border-color: rgba(148, 163, 184, 0.24);
+  color: #CBD5E1;
+}
+
+.jdh-portal.dark .theme-btn:hover,
+.dark .jdh-portal .theme-btn:hover {
+  border-color: rgba(248, 113, 113, 0.55);
+  color: #F8FAFC;
+  background: #334155;
+}
+
+.jdh-portal.dark .google-btn,
+.dark .jdh-portal .google-btn {
+  background: #1E293B;
+  border-color: rgba(148, 163, 184, 0.24);
+  color: #F8FAFC;
+}
+
+.jdh-portal.dark .google-btn:hover:not(:disabled),
+.dark .jdh-portal .google-btn:hover:not(:disabled) {
+  background: #334155;
+  border-color: rgba(148, 163, 184, 0.38);
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.28);
+}
+
+.jdh-portal.dark .deco-brand,
+.dark .jdh-portal .deco-brand,
+.jdh-portal.dark .deco-tagline,
+.dark .jdh-portal .deco-tagline {
+  color: #F8FAFC;
+}
+
+/* ════════════════════════════════════════════════════════════
+   PORTAL REGISTRATION COMPONENT STYLES (DARK & LIGHT ALIGNED)
+   ════════════════════════════════════════════════════════════ */
+.jdh-portal .step-wizard-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.35rem;
+  padding: 0.35rem;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
+}
+.jdh-portal.light .step-wizard-bar {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+}
+.jdh-portal .step-wizard-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.5rem 0.4rem;
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.jdh-portal.dark .step-wizard-item {
+  color: #94a3b8;
+}
+.jdh-portal.dark .step-wizard-item.active {
+  background: rgba(185, 28, 28, 0.18);
+  color: #ffffff;
+  border-color: rgba(185, 28, 28, 0.45);
+  box-shadow: 0 0 12px rgba(185, 28, 28, 0.22);
+}
+.jdh-portal.dark .step-wizard-item.completed {
+  color: #f87171;
+}
+.jdh-portal.light .step-wizard-item {
+  color: #64748b;
+}
+.jdh-portal.light .step-wizard-item.active {
+  background: #ffffff;
+  color: #1e293b;
+  border-color: #b91c1c;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+.jdh-portal.light .step-wizard-item.completed {
+  color: #b91c1c;
+}
+
+.jdh-portal .field select,
+.jdh-portal .field textarea {
+  width: 100%;
+  padding: 0.82rem 1rem;
+  border-radius: 10px;
+  font-family: var(--sans);
+  font-size: 0.88rem;
+  outline: none !important;
+  transition: all 0.2s ease;
+}
+.jdh-portal.dark .field select,
+.jdh-portal.dark .field textarea {
+  background: rgba(16, 16, 16, 0.95);
+  border: 1px solid rgba(185, 28, 28, 0.35);
+  color: #ffffff;
+  box-shadow: inset 0 2px 6px rgba(0,0,0,0.6);
+}
+.jdh-portal.dark .field select:focus,
+.jdh-portal.dark .field textarea:focus {
+  border-color: #b91c1c !important;
+  box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.2), inset 0 0 8px rgba(185, 28, 28, 0.12) !important;
+  background: rgba(22, 22, 22, 0.98);
+}
+.jdh-portal.light .field select,
+.jdh-portal.light .field textarea {
+  background: #ffffff;
+  border: 1.5px solid #cbd5e1;
+  color: #0f172a;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+.jdh-portal.light .field select:focus,
+.jdh-portal.light .field textarea:focus {
+  border-color: #b91c1c !important;
+  box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.14) !important;
+  background: #ffffff;
+}
+
+.jdh-portal .subject-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(135px, 1fr));
+  gap: 0.5rem;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 0.25rem;
+}
+.jdh-portal .subject-chip {
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: left;
+  line-height: 1.3;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+}
+.jdh-portal.dark .subject-chip {
+  background: rgba(20, 20, 20, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  color: #ffffff;
+}
+.jdh-portal.dark .subject-chip:hover {
+  border-color: rgba(185, 28, 28, 0.55);
+  background: rgba(35, 15, 15, 0.95);
+}
+.jdh-portal.dark .subject-chip.selected {
+  background: rgba(185, 28, 28, 0.25);
+  border-color: #b91c1c;
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(185, 28, 28, 0.28);
+}
+.jdh-portal.light .subject-chip {
+  background: #f8fafc;
+  border: 1.5px solid #e2e8f0;
+  color: #1e293b;
+}
+.jdh-portal.light .subject-chip:hover {
+  border-color: #1e293b;
+  background: #f1f5f9;
+}
+.jdh-portal.light .subject-chip.selected {
+  background: #fef2f2;
+  border-color: #b91c1c;
+  color: #b91c1c;
+  box-shadow: 0 2px 6px rgba(185, 28, 28, 0.12);
+}
+
+.jdh-portal .pw-strength-wrap {
+  margin-top: 0.45rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.jdh-portal .pw-strength-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.2);
+  overflow: hidden;
+}
+.jdh-portal .pw-strength-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: all 0.3s ease;
+}
+
+.jdh-portal .review-box {
+  border-radius: 12px;
+  padding: 1rem 1.15rem;
+  margin-bottom: 1.25rem;
+}
+.jdh-portal.dark .review-box {
+  background: rgba(18, 18, 18, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+}
+.jdh-portal.light .review-box {
+  background: #f8fafc;
+  border: 1.5px solid #cbd5e1;
+}
+

@@ -1,0 +1,156 @@
+import { initializeApp, getApps, getApp } from "firebase/app";
+import { 
+  initializeFirestore, 
+  getFirestore, 
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  memoryLocalCache,
+  setLogLevel
+} from "firebase/firestore";
+import { 
+  getAuth, 
+  initializeAuth, 
+  browserLocalPersistence, 
+  browserSessionPersistence, 
+  indexedDBLocalPersistence, 
+  inMemoryPersistence,
+  browserPopupRedirectResolver
+} from "firebase/auth";
+import { getStorage } from "firebase/storage";
+
+// Silence internal @firebase/firestore transport/offline timeout console.error logs
+// while Firestore transparently operates from persistent local cache and long-polling fallback.
+try {
+  setLogLevel("silent");
+} catch {
+  // ignore if unsupported in test environment
+}
+
+const envDbId = typeof import.meta !== "undefined" ? (import.meta as any).env?.VITE_FIREBASE_DATABASE_ID : "";
+export const DEFAULT_DATABASE_ID = "(default)";
+export const LEGACY_NAMED_DATABASE_ID = "ai-studio-jaystarblissdyna-085e16ac-52ee-43ae-9c0c-52f6db7f8f7c";
+export const ACTIVE_DB_STORAGE_KEY = "jaystar_active_database_id";
+
+function resolveInitialDatabaseId(): string {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      const saved = window.localStorage.getItem(ACTIVE_DB_STORAGE_KEY)?.trim();
+      if (saved === LEGACY_NAMED_DATABASE_ID) {
+        window.localStorage.setItem(ACTIVE_DB_STORAGE_KEY, DEFAULT_DATABASE_ID);
+      }
+    }
+  } catch {
+    // ignore storage access errors
+  }
+  return DEFAULT_DATABASE_ID;
+}
+
+export const ACTIVE_DATABASE_ID = resolveInitialDatabaseId();
+export const STANDBY_DATABASE_ID = DEFAULT_DATABASE_ID;
+const PRIMARY_DATABASE_ID = ACTIVE_DATABASE_ID;
+
+export function getActiveDatabaseId(): string {
+  return ACTIVE_DATABASE_ID;
+}
+
+export function setActiveDatabaseId(_nextDbId: string, reload = true): void {
+  const normalized = DEFAULT_DATABASE_ID;
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.setItem(ACTIVE_DB_STORAGE_KEY, normalized);
+      // Clear cached banner/CMS session keys so the switched database loads fresh state
+      if (window.sessionStorage) {
+        window.sessionStorage.removeItem("jaystar_marquee_banner_v1");
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+  if (reload && typeof window !== "undefined") {
+    window.location.reload();
+  }
+}
+
+// Note: Do not overwrite window.fetch, as window.fetch is a getter-only property in the preview runtime.
+
+const firebaseConfig = {
+  apiKey: "AIzaSyD_lq2Z4qBrZZkzYmEMPPMtCKQmfSx2rkY",
+  authDomain: "jaystarbliss-studios.firebaseapp.com",
+  projectId: "jaystarbliss-studios",
+  storageBucket: "jaystarbliss-studios.firebasestorage.app",
+  messagingSenderId: "885364100276",
+  appId: "1:885364100276:web:1159c4cbd9159aaa0e1be1",
+  firestoreDatabaseId: PRIMARY_DATABASE_ID
+};
+
+// Initialize Firebase App
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+
+function createFirestoreInstance(databaseId: string): ReturnType<typeof getFirestore> {
+  const targetId = databaseId === DEFAULT_DATABASE_ID ? undefined : databaseId;
+  try {
+    return initializeFirestore(
+      app,
+      {
+        experimentalAutoDetectLongPolling: true,
+        localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+      },
+      targetId
+    );
+  } catch {
+    try {
+      return initializeFirestore(
+        app,
+        {
+          experimentalAutoDetectLongPolling: true,
+          localCache: memoryLocalCache(),
+        },
+        targetId
+      );
+    } catch {
+      return targetId ? getFirestore(app, targetId) : getFirestore(app);
+    }
+  }
+}
+
+// Initialize primary Firestore with persistent IndexedDB cache (fallback to memory cache in restricted contexts)
+const db: ReturnType<typeof getFirestore> = createFirestoreInstance(PRIMARY_DATABASE_ID);
+
+// Keep defaultDb aliased to the active primary database so all reads/writes target the selected database
+const defaultDb = db;
+
+let standbyDbInstance: ReturnType<typeof getFirestore> | null = null;
+export function getStandbyFirestore(): ReturnType<typeof getFirestore> {
+  return db;
+}
+
+export function getFirestoreById(_databaseId: string): ReturnType<typeof getFirestore> {
+  return db;
+}
+
+export const getClientDatabases = () => [db];
+
+export const getAllClientDatabases = () => [db];
+
+// Initialize Auth with multi-tier persistence (localStorage -> indexedDB -> sessionStorage -> memory)
+// Note: browserPopupRedirectResolver is passed on-demand to signInWithPopup to avoid eager COOP window.closed checks
+let auth: ReturnType<typeof getAuth>;
+try {
+  auth = initializeAuth(app, {
+    persistence: [
+      browserLocalPersistence,
+      indexedDBLocalPersistence,
+      browserSessionPersistence,
+      inMemoryPersistence
+    ]
+  });
+} catch {
+  auth = getAuth(app);
+}
+
+const storage = getStorage(app);
+
+export { app, db, defaultDb, auth, storage, firebaseConfig, browserPopupRedirectResolver };
+
+
+

@@ -1,0 +1,57 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NPM_FLAGS = "--legacy-peer-deps"
+  NODE_VERSION = "22.23.2"
+  # Firebase project/database IDs are public identifiers shipped in the web
+  # client config (and the project ID is the brand name), so they are not secrets.
+  # FIREBASE_PRIVATE_KEY and FIREBASE_CLIENT_EMAIL remain scanned.
+  SECRETS_SCAN_OMIT_KEYS = "FIREBASE_PROJECT_ID,FIREBASE_DATABASE_ID,VITE_CLOUDINARY_CLOUD_NAME,VITE_CLOUDINARY_UPLOAD_PRESET,PUBLIC_APP_URL"
+
+[functions]
+  directory = "netlify/functions"
+
+# Legacy domain migration: permanently redirect the old .name.ng host to the new .com domain.
+# Keep these hostname-specific rules before the API proxy and SPA fallback rules.
+[[redirects]]
+  from = "https://jaystarbliss-studios.name.ng/*"
+  to = "https://jaystarblissstudios.com/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "http://jaystarbliss-studios.name.ng/*"
+  to = "https://jaystarblissstudios.com/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://www.jaystarbliss-studios.name.ng/*"
+  to = "https://jaystarblissstudios.com/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "http://www.jaystarbliss-studios.name.ng/*"
+  to = "https://jaystarblissstudios.com/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin-allow-popups"
+

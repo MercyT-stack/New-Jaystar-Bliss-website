@@ -1,0 +1,3367 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import {
+  ArrowLeft,
+  Eye,
+  Save,
+  CheckCircle2,
+  AlertCircle,
+  Clock,
+  KeyRound,
+  Calendar,
+  Settings as SettingsIcon,
+  Users,
+  FileText,
+  BarChart3,
+  Activity,
+  Plus,
+  Copy,
+  Trash2,
+  Download,
+  Upload,
+  ExternalLink,
+  ChevronDown,
+  Sparkles,
+  Link2,
+  Lock,
+  Layers,
+  School,
+  User,
+  Check,
+  X,
+  MessageSquare,
+  HelpCircle,
+  Shuffle,
+  ShieldCheck,
+  BookOpen,
+} from 'lucide-react';
+import {
+  type AcademicWorkType,
+  WORK_TYPES,
+  normalizeWorkType,
+  validateExternalExamUrl,
+  CANONICAL_CLASSES,
+} from '../../lib/classes';
+import {
+  RecipientSelectorModal,
+  type RecipientSchool,
+  type RecipientPrivateStudent,
+} from './RecipientSelectorModal';
+import { NativeQuestionCard, type NativeQuestionData, type QuestionTypeChoice } from './NativeQuestionCard';
+import { ImportQuestionsModal, type QuestionBankItem } from './ImportQuestionsModal';
+import { AssessmentProgramPicker, type SelectedProgramPathway } from './AssessmentProgramPicker';
+import EmbeddedLearningMedia from '../portal/EmbeddedLearningMedia';
+import {
+  type ProgramRecord,
+  fetchAllProgramsMap,
+  resolveRecipientEnrolledPrograms,
+  resolveProgramSubjectsAndModules,
+} from '../../lib/programHierarchy';
+
+const generateAccessCode = () =>
+  Math.random().toString(36).substring(2, 8).toUpperCase();
+
+const makeId = () =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : 'q-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+
+const TUTOR_REMARK_PRESETS = [
+  { id: '1', label: 'Distinction', text: 'Exceptional work. Demonstrated outstanding mastery of all concepts.' },
+  { id: '2', label: 'Very Good', text: 'Very impressive performance with strong conceptual understanding.' },
+  { id: '3', label: 'Good Effort', text: 'Good effort demonstrated. Keep practicing the practical applications.' },
+  { id: '4', label: 'Fair Progress', text: 'Fair submission. Review the lesson materials and attempt revision tasks.' },
+  { id: '5', label: 'Needs Improvement', text: 'Needs more dedicated attention and tutor-guided practice.' },
+];
+
+export interface AssessmentEditorProps {
+  initialExam?: any;
+  isCreatingNew?: boolean;
+  assignedSchools: Array<{ id: string; name: string; [key: string]: any }>;
+  assignedPrivateStudents: RecipientPrivateStudent[];
+  assignedSchoolStudents?: RecipientPrivateStudent[];
+  questionBankItems: QuestionBankItem[];
+  currentUserRole: string;
+  isTutor?: boolean;
+  onBackToOverview: () => void;
+  onSaveAssessment: (payload: any) => Promise<void>;
+  // Response management props
+  examAttempts?: any[];
+  onReleaseResult?: (attempt: any) => Promise<void>;
+  onReleaseAllSubmitted?: () => Promise<void>;
+  onSaveManualGrade?: (
+    attempt: any,
+    andRelease?: boolean,
+    overrides?: { totalOverride?: string; itemScores?: Record<string, number>; remark?: string }
+  ) => Promise<void>;
+  onSaveTutorRemark?: (attempt: any, remark: string) => Promise<void>;
+  onExportCsv?: () => void;
+  onPreviewStudent?: (exam: any) => void;
+  initialTab?: 'questions' | 'responses' | 'settings';
+  initialPreviewOpen?: boolean;
+}
+
+export const AssessmentEditor: React.FC<AssessmentEditorProps> = ({
+  initialExam,
+  isCreatingNew = false,
+  assignedSchools,
+  assignedPrivateStudents,
+  assignedSchoolStudents = [],
+  questionBankItems = [],
+  isTutor = false,
+  onBackToOverview,
+  onSaveAssessment,
+  examAttempts = [],
+  onReleaseResult,
+  onReleaseAllSubmitted,
+  onSaveManualGrade,
+  onSaveTutorRemark,
+  onExportCsv,
+  onPreviewStudent,
+  initialTab = 'questions',
+  initialPreviewOpen = false,
+}) => {
+  // Whether initial 3-stage setup modal is open (only when creating brand new)
+  const [showInitialSetupModal, setShowInitialSetupModal] = useState<boolean>(isCreatingNew);
+  const [setupStep, setSetupStep] = useState<1 | 2 | 3>(1);
+
+  // Active Workspace Tab (Questions | Responses | Settings)
+  const [activeTab, setActiveTab] = useState<'questions' | 'responses' | 'settings'>(initialTab);
+
+  // Interactive Student Preview Modal State
+  const [showPreviewModal, setShowPreviewModal] = useState<boolean>(Boolean(initialPreviewOpen));
+  const [previewAnswers, setPreviewAnswers] = useState<Record<string, any>>({});
+  const [previewSubmitted, setPreviewSubmitted] = useState<boolean>(false);
+  const [previewShowKey, setPreviewShowKey] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (initialPreviewOpen) {
+      setShowPreviewModal(true);
+    }
+  }, [initialPreviewOpen]);
+
+  // Unsaved changes tracking
+  const [isDirty, setIsDirty] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [saveBannerMessage, setSaveBannerMessage] = useState<string>('');
+  const [saveErrorMessage, setSaveErrorMessage] = useState<string>('');
+
+  // -------------------------------------------------------------
+  // Assessment Core State
+  // -------------------------------------------------------------
+  const [workType, setWorkType] = useState<AcademicWorkType>(
+    initialExam ? normalizeWorkType(initialExam.workType, initialExam) : 'ASSIGNMENT'
+  );
+  const [deliveryMode, setDeliveryMode] = useState<'NATIVE' | 'EXTERNAL_LINK'>(
+    initialExam?.deliveryMode === 'EXTERNAL_LINK' ? 'EXTERNAL_LINK' : 'NATIVE'
+  );
+  const [title, setTitle] = useState<string>(initialExam?.title || '');
+  const [description, setDescription] = useState<string>(
+    initialExam?.description || initialExam?.instructions || ''
+  );
+  const [subject, setSubject] = useState<string>(initialExam?.subject || 'Technology & Digital Skills');
+  const [programTitle, setProgramTitle] = useState<string>(
+    initialExam?.programTitle || initialExam?.programName || 'Technology Programme'
+  );
+  const [programId, setProgramId] = useState<string>(
+    initialExam?.programId || 'root-technology-programme'
+  );
+  const [programBreadcrumbs, setProgramBreadcrumbs] = useState<string>(
+    initialExam?.programPath || initialExam?.programBreadcrumbs || 'Technology Programme'
+  );
+  const [primaryCategory, setPrimaryCategory] = useState<string>(
+    initialExam?.primaryCategory || initialExam?.category || 'Technology Programme'
+  );
+  const [targetClass, setTargetClass] = useState<string>(
+    initialExam?.targetClass || initialExam?.className || CANONICAL_CLASSES[1] || 'Primary 4'
+  );
+  const [externalUrl, setExternalUrl] = useState<string>(initialExam?.externalUrl || '');
+  const [status, setStatus] = useState<'draft' | 'active' | 'scheduled'>(
+    initialExam?.status || 'draft'
+  );
+
+  // -------------------------------------------------------------
+  // Recipients State
+  // -------------------------------------------------------------
+  const [recipientMode, setRecipientMode] = useState<'SCHOOL_CLASS' | 'PRIVATE_LEARNERS' | 'MULTI_TARGET'>(
+    initialExam?.recipientMode || 'SCHOOL_CLASS'
+  );
+  const [targetSchoolIds, setTargetSchoolIds] = useState<string[]>(
+    initialExam?.targetSchoolIds ||
+      (initialExam?.schoolId && initialExam.schoolId !== 'private' ? [initialExam.schoolId] : [])
+  );
+  const [targetStudentIds, setTargetStudentIds] = useState<string[]>(
+    initialExam?.targetStudentIds || []
+  );
+  const [showRecipientModal, setShowRecipientModal] = useState<boolean>(false);
+
+  // -------------------------------------------------------------
+  // Questions State
+  // -------------------------------------------------------------
+  const [questions, setQuestions] = useState<NativeQuestionData[]>(() => {
+    if (initialExam?.questions && Array.isArray(initialExam.questions) && initialExam.questions.length > 0) {
+      return initialExam.questions.map((q: any) => ({
+        id: q.id || makeId(),
+        prompt: q.prompt || '',
+        type: q.type || 'multiple_choice',
+        points: Number(q.points ?? 2),
+        required: q.required !== false,
+        options: q.options || [
+          { id: 'A', text: 'Option 1' },
+          { id: 'B', text: 'Option 2' },
+          { id: 'C', text: 'Option 3' },
+          { id: 'D', text: 'Option 4' },
+        ],
+        correctOptionIds: q.correctOptionIds || ['A'],
+        acceptedAnswers: q.acceptedAnswers || [],
+        deliverableInstructions: q.deliverableInstructions || '',
+      }));
+    }
+    return [
+      {
+        id: makeId(),
+        prompt: '',
+        type: 'multiple_choice',
+        points: 2,
+        required: true,
+        options: [
+          { id: 'A', text: 'Option 1' },
+          { id: 'B', text: 'Option 2' },
+          { id: 'C', text: 'Option 3' },
+          { id: 'D', text: 'Option 4' },
+        ],
+        correctOptionIds: ['A'],
+      },
+    ];
+  });
+  const [activeQuestionId, setActiveQuestionId] = useState<string>(questions[0]?.id || '');
+  const [showImportModal, setShowImportModal] = useState<boolean>(false);
+
+  // -------------------------------------------------------------
+  // Settings State
+  // -------------------------------------------------------------
+  const [makeQuiz, setMakeQuiz] = useState<boolean>(initialExam?.makeQuiz !== false);
+  const [gradingMode, setGradingMode] = useState<'automatic' | 'manual'>(
+    initialExam?.gradingMode || 'automatic'
+  );
+  const [releaseGradesPolicy, setReleaseGradesPolicy] = useState<'immediate' | 'manual'>(
+    initialExam?.releaseGradesPolicy ||
+      (initialExam?.gradingMode === 'manual' ? 'manual' : 'immediate')
+  );
+  const [showMissedQuestions, setShowMissedQuestions] = useState<boolean>(
+    initialExam?.showMissedQuestions !== false
+  );
+  const [showCorrectAnswers, setShowCorrectAnswers] = useState<boolean>(
+    initialExam?.showCorrectAnswers !== false
+  );
+  const [showPointValues, setShowPointValues] = useState<boolean>(
+    initialExam?.showPointValues !== false
+  );
+  const [defaultPointValue, setDefaultPointValue] = useState<number>(
+    Number(initialExam?.defaultPointValue || 2)
+  );
+  const isPasscodeMandatory = workType === 'TEST' || workType === 'EXAMINATION';
+  const [hasPasscode, setHasPasscode] = useState<boolean>(
+    workType === 'TEST' || workType === 'EXAMINATION'
+      ? true
+      : Boolean(initialExam?.hasPasscode ?? initialExam?.passcode)
+  );
+  const [passcode, setPasscode] = useState<string>(
+    initialExam?.passcode || generateAccessCode()
+  );
+  const [hasTimeLimit, setHasTimeLimit] = useState<boolean>(
+    initialExam?.hasTimeLimit !== undefined
+      ? Boolean(initialExam.hasTimeLimit)
+      : initialExam?.durationMinutes !== null &&
+          initialExam?.durationMinutes !== undefined &&
+          Number(initialExam?.durationMinutes) > 0
+  );
+  const [durationMinutes, setDurationMinutes] = useState<number>(
+    Number(initialExam?.durationMinutes) > 0
+      ? Number(initialExam.durationMinutes)
+      : workType === 'TEST'
+      ? 20
+      : workType === 'ACTIVITY'
+      ? 15
+      : 30
+  );
+  const [activationMode, setActivationMode] = useState<'now' | 'scheduled'>(
+    initialExam?.status === 'scheduled' ||
+      (initialExam?.availableFrom && new Date(initialExam.availableFrom).getTime() > Date.now())
+      ? 'scheduled'
+      : 'now'
+  );
+  const [availableFrom, setAvailableFrom] = useState<string>(initialExam?.availableFrom || '');
+  const [availableUntil, setAvailableUntil] = useState<string>(initialExam?.availableUntil || '');
+  const [dueDate, setDueDate] = useState<string>(initialExam?.dueDate || '');
+  const [deliverables, setDeliverables] = useState<string>(initialExam?.deliverables || '');
+  const [learningResources, setLearningResources] = useState<
+    Array<{ id: string; title: string; instructions: string; url: string; youtubeUrl: string }>
+  >(() => {
+    if (Array.isArray(initialExam?.learningResources) && initialExam.learningResources.length > 0) {
+      return initialExam.learningResources.map((r: any) => ({
+        id: r.id || makeId(),
+        title: String(r.title || ''),
+        instructions: String(r.instructions || ''),
+        url: String(r.url || ''),
+        youtubeUrl: String(r.youtubeUrl || ''),
+      }));
+    }
+    const legacyUrl = String(initialExam?.resourceUrl || '').trim();
+    const legacyVideo = String(
+      initialExam?.videoUrl || initialExam?.learningVideoUrl || ''
+    ).trim();
+    const legacyTitle = String(initialExam?.resourceTitle || '').trim();
+    if (legacyUrl || legacyVideo || legacyTitle) {
+      return [
+        {
+          id: makeId(),
+          title: legacyTitle || 'Reference Learning Material',
+          instructions: '',
+          url: legacyUrl,
+          youtubeUrl: legacyVideo,
+        },
+      ];
+    }
+    return [];
+  });
+  const [limitOneAttempt, setLimitOneAttempt] = useState<boolean>(
+    initialExam?.limitOneAttempt !== false
+  );
+  const [shuffleQuestions, setShuffleQuestions] = useState<boolean>(
+    Boolean(initialExam?.shuffleQuestions)
+  );
+  const [shuffleOptions, setShuffleOptions] = useState<boolean>(
+    Boolean(initialExam?.shuffleOptions)
+  );
+  const [confirmationMessage, setConfirmationMessage] = useState<string>(
+    initialExam?.confirmationMessage || 'Your response has been recorded. Good job!'
+  );
+
+  // Enforce mandatory passcode whenever workType is TEST or EXAMINATION
+  useEffect(() => {
+    if (workType === 'TEST' || workType === 'EXAMINATION') {
+      setHasPasscode(true);
+      setPasscode((prev) => (prev && prev.trim() ? prev.trim().toUpperCase() : generateAccessCode()));
+    }
+  }, [workType]);
+
+  // Load canonical programme hierarchy for dynamic recipient-based Program & Subject selection
+  const [programsMap, setProgramsMap] = useState<Map<string, ProgramRecord>>(new Map());
+  useEffect(() => {
+    let active = true;
+    fetchAllProgramsMap()
+      .then((map) => {
+        if (active) setProgramsMap(map);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Dynamically resolve enrolled programs for currently selected recipients
+  const recipientEnrolledPrograms = useMemo(() => {
+    const selectedSchools = assignedSchools.filter((s) => targetSchoolIds.includes(s.id));
+    const allStudents = [...assignedPrivateStudents, ...assignedSchoolStudents];
+    const selectedStudents = allStudents.filter((st) => targetStudentIds.includes(st.id));
+    return resolveRecipientEnrolledPrograms(programsMap, {
+      schools: selectedSchools,
+      students: selectedStudents,
+    });
+  }, [
+    programsMap,
+    assignedSchools,
+    assignedPrivateStudents,
+    assignedSchoolStudents,
+    targetSchoolIds,
+    targetStudentIds,
+  ]);
+
+  // Dynamically resolve child Subjects / Sub-Programmes / Modules for the selected Program
+  const availableProgramSubjects = useMemo(() => {
+    return resolveProgramSubjectsAndModules(programId || programTitle, programsMap);
+  }, [programId, programTitle, programsMap]);
+
+  // Ensure selected Program stays aligned with recipient's enrolled programs when recipients change
+  useEffect(() => {
+    if (recipientEnrolledPrograms.length === 0) return;
+    const normId = programId.trim().toLowerCase();
+    const normTitle = programTitle.trim().toLowerCase();
+    const matchesCurrent = recipientEnrolledPrograms.some(
+      (p) => p.id.toLowerCase() === normId || p.title.toLowerCase() === normTitle
+    );
+    if (!matchesCurrent) {
+      const first = recipientEnrolledPrograms[0];
+      setProgramId(first.id);
+      setProgramTitle(first.title);
+      setProgramBreadcrumbs(first.title);
+      setPrimaryCategory(first.title);
+    }
+  }, [recipientEnrolledPrograms]);
+
+  // Ensure Subject defaults to a valid subject belonging to the selected Program if empty
+  useEffect(() => {
+    if (availableProgramSubjects.length === 0) return;
+    const normSub = subject.trim().toLowerCase();
+    const matchesSub = availableProgramSubjects.some(
+      (s) => s.title.toLowerCase() === normSub
+    );
+    if (!normSub || (!matchesSub && isCreatingNew)) {
+      setSubject(availableProgramSubjects[0].title);
+    }
+  }, [availableProgramSubjects, isCreatingNew]);
+
+  // -------------------------------------------------------------
+  // Responses Tab State
+  // -------------------------------------------------------------
+  const [responsesSubTab, setResponsesSubTab] = useState<'live' | 'summary' | 'question' | 'individual'>('live');
+  const [selectedAttemptId, setSelectedAttemptId] = useState<string>('');
+  const [selectedQuestionIndex, setSelectedQuestionIndex] = useState<number>(0);
+  const [manualScoresByAttempt, setManualScoresByAttempt] = useState<Record<string, Record<string, number>>>({});
+  const [manualTotalScoreByAttempt, setManualTotalScoreByAttempt] = useState<Record<string, string>>({});
+  const [tutorRemarksByAttempt, setTutorRemarksByAttempt] = useState<Record<string, string>>({});
+  const [releasingResultId, setReleasingResultId] = useState<string | null>(null);
+  const [bulkReleasingResults, setBulkReleasingResults] = useState<boolean>(false);
+  const [savingGradeId, setSavingGradeId] = useState<string | null>(null);
+
+  // Mark form as dirty when edits occur
+  const markDirty = () => {
+    if (!isDirty) setIsDirty(true);
+  };
+
+  // Total possible score computed from questions
+  const totalMarks = useMemo(() => {
+    if (deliveryMode === 'EXTERNAL_LINK') return initialExam?.maxScore || 100;
+    return questions.reduce((acc, q) => acc + (Number(q.points) || 0), 0);
+  }, [questions, deliveryMode, initialExam]);
+
+  // Recipient names summary
+  const recipientSummary = useMemo(() => {
+    const schoolNames = assignedSchools
+      .filter((s) => targetSchoolIds.includes(s.id))
+      .map((s) => s.name);
+    const allKnownStudents = [...assignedPrivateStudents, ...assignedSchoolStudents];
+    const studentMap = new Map<string, string>();
+    allKnownStudents.forEach((st) => {
+      if (st?.id && targetStudentIds.includes(st.id)) {
+        studentMap.set(st.id, st.fullName || st.name || 'Student');
+      }
+    });
+    const studentNames = Array.from(studentMap.values());
+
+    return {
+      schools: schoolNames,
+      students: studentNames,
+      totalCount: schoolNames.length + studentNames.length,
+      label:
+        schoolNames.length > 0 && studentNames.length > 0
+          ? `${schoolNames.length} School(s) & ${studentNames.length} Student(s)`
+          : schoolNames.length > 0
+          ? `${schoolNames.length} School(s)`
+          : studentNames.length > 0
+          ? `${studentNames.length} Student(s)`
+          : 'None Selected',
+    };
+  }, [assignedSchools, assignedPrivateStudents, assignedSchoolStudents, targetSchoolIds, targetStudentIds]);
+
+  // Proctor Metrics for Responses Tab
+  const proctorMetrics = useMemo(() => {
+    const now = Date.now();
+    let onlineActiveCount = 0;
+    let offlineInProgressCount = 0;
+    let submittedCompletedCount = 0;
+
+    examAttempts.forEach((at) => {
+      let heartbeatTime = 0;
+      if (at.lastHeartbeat?.toMillis) heartbeatTime = at.lastHeartbeat.toMillis();
+      else if (typeof at.lastHeartbeat === 'string') heartbeatTime = new Date(at.lastHeartbeat).getTime();
+
+      const isHeartbeatFresh = heartbeatTime > 0 && now - heartbeatTime < 150000;
+      if (at.status === 'in_progress') {
+        if (at.isOnline !== false && isHeartbeatFresh) {
+          onlineActiveCount++;
+        } else {
+          offlineInProgressCount++;
+        }
+      } else if (['submitted', 'completed', 'graded', 'expired'].includes(at.status)) {
+        submittedCompletedCount++;
+      }
+    });
+
+    const totalEligible = Math.max(
+      examAttempts.length,
+      recipientSummary.students.length || (targetSchoolIds.length > 0 ? 25 : 0)
+    );
+    const notStartedCount = Math.max(0, totalEligible - (onlineActiveCount + offlineInProgressCount + submittedCompletedCount));
+
+    return {
+      onlineActiveCount,
+      offlineInProgressCount,
+      submittedCompletedCount,
+      notStartedCount,
+      totalEligible,
+    };
+  }, [examAttempts, recipientSummary, targetSchoolIds]);
+
+  // Summary Insights for Responses Tab
+  const summaryInsights = useMemo(() => {
+    const scoredAttempts = examAttempts.filter(
+      (at) => ['submitted', 'completed', 'graded', 'expired'].includes(at.status) && at.score !== undefined
+    );
+    if (!scoredAttempts.length) {
+      return {
+        avgScore: 0,
+        medianScore: 0,
+        rangeMin: 0,
+        rangeMax: 0,
+        distribution: [] as Array<{ points: number; count: number }>,
+        frequentlyMissed: [] as Array<{ prompt: string; correctRate: number }>,
+      };
+    }
+
+    const scores = scoredAttempts.map((at) => Number(at.score || 0)).sort((a, b) => a - b);
+    const sum = scores.reduce((acc, s) => acc + s, 0);
+    const avgScore = Number((sum / scores.length).toFixed(1));
+    const medianScore = scores[Math.floor(scores.length / 2)] || 0;
+    const rangeMin = scores[0];
+    const rangeMax = scores[scores.length - 1];
+
+    // Distribution
+    const distMap: Record<number, number> = {};
+    scores.forEach((sc) => {
+      const rounded = Math.round(sc);
+      distMap[rounded] = (distMap[rounded] || 0) + 1;
+    });
+    const distribution = Object.entries(distMap).map(([pts, count]) => ({
+      points: Number(pts),
+      count,
+    }));
+
+    // Frequently Missed Questions
+    const missedList: Array<{ prompt: string; correctRate: number }> = [];
+    questions.forEach((q) => {
+      if (q.type === 'multiple_choice' && q.correctOptionIds && q.correctOptionIds.length > 0) {
+        let correctCount = 0;
+        let attemptCount = 0;
+        scoredAttempts.forEach((at) => {
+          const ans = at.answers?.[q.id];
+          if (ans !== undefined) {
+            attemptCount++;
+            if (Array.isArray(ans) ? ans.some((a) => q.correctOptionIds?.includes(a)) : (q.correctOptionIds ? q.correctOptionIds.includes(ans) : false)) {
+              correctCount++;
+            }
+          }
+        });
+        if (attemptCount > 0) {
+          const rate = Math.round((correctCount / attemptCount) * 100);
+          if (rate < 60) {
+            missedList.push({ prompt: q.prompt || 'Untitled Question', correctRate: rate });
+          }
+        }
+      }
+    });
+
+    return {
+      avgScore,
+      medianScore,
+      rangeMin,
+      rangeMax,
+      distribution,
+      frequentlyMissed: missedList,
+    };
+  }, [examAttempts, questions]);
+
+  // Question Management Callbacks
+  const handleAddQuestion = (index?: number) => {
+    markDirty();
+    const newQ: NativeQuestionData = {
+      id: makeId(),
+      prompt: '',
+      type: 'multiple_choice',
+      points: defaultPointValue,
+      required: true,
+      options: [
+        { id: 'A', text: 'Option 1' },
+        { id: 'B', text: 'Option 2' },
+        { id: 'C', text: 'Option 3' },
+        { id: 'D', text: 'Option 4' },
+      ],
+      correctOptionIds: ['A'],
+    };
+
+    if (index !== undefined && index >= 0) {
+      const updated = [...questions];
+      updated.splice(index + 1, 0, newQ);
+      setQuestions(updated);
+      setActiveQuestionId(newQ.id);
+    } else {
+      setQuestions((prev) => [...prev, newQ]);
+      setActiveQuestionId(newQ.id);
+    }
+  };
+
+  const handleUpdateQuestion = (index: number, updatedQ: NativeQuestionData) => {
+    markDirty();
+    setQuestions((prev) => {
+      const copy = [...prev];
+      copy[index] = updatedQ;
+      return copy;
+    });
+  };
+
+  const handleDuplicateQuestion = (index: number) => {
+    markDirty();
+    const source = questions[index];
+    const duplicated: NativeQuestionData = {
+      ...source,
+      id: makeId(),
+      prompt: source.prompt ? `${source.prompt} (Copy)` : 'Copy of Question',
+      options: source.options ? source.options.map((opt) => ({ ...opt, id: opt.id })) : undefined,
+    };
+    const updated = [...questions];
+    updated.splice(index + 1, 0, duplicated);
+    setQuestions(updated);
+    setActiveQuestionId(duplicated.id);
+  };
+
+  const handleDeleteQuestion = (index: number) => {
+    markDirty();
+    if (questions.length <= 1) {
+      alert('An assessment must have at least one question.');
+      return;
+    }
+    const updated = questions.filter((_, idx) => idx !== index);
+    setQuestions(updated);
+    if (activeQuestionId === questions[index]?.id) {
+      setActiveQuestionId(updated[Math.max(0, index - 1)]?.id || '');
+    }
+  };
+
+  const handleMoveQuestion = (index: number, direction: 'up' | 'down') => {
+    if (direction === 'up' && index === 0) return;
+    if (direction === 'down' && index === questions.length - 1) return;
+    markDirty();
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    const updated = [...questions];
+    const [moved] = updated.splice(index, 1);
+    updated.splice(targetIndex, 0, moved);
+    setQuestions(updated);
+  };
+
+  const handleImportBatchQuestions = (importedList: any[]) => {
+    markDirty();
+    const formatted: NativeQuestionData[] = importedList.map((item) => ({
+      id: item.id || makeId(),
+      prompt: item.prompt || '',
+      type: item.type || 'multiple_choice',
+      points: Number(item.points || defaultPointValue),
+      required: item.required !== false,
+      options: item.options || [
+        { id: 'A', text: 'Option A' },
+        { id: 'B', text: 'Option B' },
+      ],
+      correctOptionIds: item.correctOptionIds || ['A'],
+      acceptedAnswers: item.acceptedAnswers || [],
+      deliverableInstructions: item.deliverableInstructions || '',
+    }));
+
+    setQuestions((prev) => [...prev, ...formatted]);
+    setShowImportModal(false);
+    setSaveBannerMessage(`Imported ${formatted.length} question(s) successfully.`);
+    setTimeout(() => setSaveBannerMessage(''), 4000);
+  };
+
+  // Save / Publish Pipeline
+  const handleSaveWorkspace = async (targetStatus?: 'draft' | 'active' | 'scheduled') => {
+    setSaveErrorMessage('');
+    if (!title.trim()) {
+      setSaveErrorMessage('Please enter an assessment title before saving.');
+      setActiveTab('questions');
+      return;
+    }
+
+    if (deliveryMode === 'EXTERNAL_LINK') {
+      const urlCheck = validateExternalExamUrl(externalUrl);
+      if (!urlCheck.valid) {
+        setSaveErrorMessage(urlCheck.error || 'Please enter a valid external assessment link.');
+        setActiveTab('questions');
+        return;
+      }
+    }
+
+    if (targetSchoolIds.length === 0 && targetStudentIds.length === 0) {
+      setSaveErrorMessage('Please assign at least one recipient school or private learner.');
+      setShowRecipientModal(true);
+      return;
+    }
+
+    // Determine effective status based on targetStatus and activationMode
+    let resolvedStatus: 'draft' | 'active' | 'scheduled' = targetStatus || status;
+    if (targetStatus === 'active' && activationMode === 'scheduled') {
+      resolvedStatus = 'scheduled';
+    }
+    if (resolvedStatus === 'scheduled') {
+      if (!availableFrom) {
+        setSaveErrorMessage(
+          'Please select a future activation date & time ("Available From") to schedule this assessment.'
+        );
+        setActiveTab('settings');
+        return;
+      }
+      const scheduledTime = new Date(availableFrom).getTime();
+      if (!Number.isFinite(scheduledTime) || scheduledTime <= Date.now()) {
+        setSaveErrorMessage(
+          'Scheduled activation date & time must be in the future, or switch Activation Mode to "Activate Now".'
+        );
+        setActiveTab('settings');
+        return;
+      }
+    }
+
+    const effectiveHasPasscode = isPasscodeMandatory || hasPasscode;
+    const effectivePasscode = effectiveHasPasscode
+      ? passcode.trim().toUpperCase() || generateAccessCode()
+      : '';
+    if (effectiveHasPasscode && effectivePasscode !== passcode) {
+      setPasscode(effectivePasscode);
+    }
+
+    const cleanedResources = learningResources
+      .map((r) => ({
+        id: r.id || makeId(),
+        title: r.title.trim() || 'Learning Resource',
+        instructions: r.instructions.trim(),
+        url: r.url.trim(),
+        youtubeUrl: r.youtubeUrl.trim(),
+      }))
+      .filter((r) => r.url || r.youtubeUrl || r.instructions);
+    const primaryResource = cleanedResources[0];
+
+    setIsSaving(true);
+    try {
+      const payload = {
+        title: title.trim(),
+        description: description.trim(),
+        instructions: description.trim(),
+        deliverables: deliverables.trim(),
+        subject: subject.trim(),
+        subProgramName: subject.trim(),
+        programTitle: programTitle.trim(),
+        programName: programTitle.trim(),
+        programId: programId.trim(),
+        programPath: programBreadcrumbs.trim(),
+        programBreadcrumbs: programBreadcrumbs.trim(),
+        primaryCategory: primaryCategory.trim(),
+        workType,
+        deliveryMode,
+        externalUrl: deliveryMode === 'EXTERNAL_LINK' ? externalUrl.trim() : '',
+        resourceTitle: primaryResource?.title || '',
+        resourceUrl: primaryResource?.url || primaryResource?.youtubeUrl || '',
+        videoUrl: primaryResource?.youtubeUrl || '',
+        learningVideoUrl: primaryResource?.youtubeUrl || '',
+        learningResources: cleanedResources,
+        status: resolvedStatus,
+        targetClass,
+        recipientMode,
+        targetSchoolIds,
+        targetStudentIds,
+        questions: deliveryMode === 'NATIVE' ? questions : [],
+        // Settings
+        makeQuiz,
+        gradingMode,
+        releaseGradesPolicy: gradingMode === 'automatic' ? releaseGradesPolicy : 'manual',
+        showMissedQuestions,
+        showCorrectAnswers,
+        showPointValues,
+        defaultPointValue,
+        hasPasscode: effectiveHasPasscode,
+        passcode: effectivePasscode,
+        hasTimeLimit,
+        durationMinutes: hasTimeLimit ? Math.max(1, Number(durationMinutes) || 30) : null,
+        availableFrom:
+          resolvedStatus === 'scheduled'
+            ? availableFrom || null
+            : activationMode === 'now'
+            ? null
+            : availableFrom || null,
+        availableUntil: availableUntil || null,
+        dueDate: dueDate || null,
+        limitOneAttempt: Boolean(limitOneAttempt),
+        maxAttempts: limitOneAttempt ? 1 : 10,
+        shuffleQuestions,
+        shuffleOptions,
+        confirmationMessage: confirmationMessage.trim(),
+        maxScore: totalMarks,
+      };
+
+      await onSaveAssessment(payload);
+      setStatus(resolvedStatus);
+      setIsDirty(false);
+      setSaveBannerMessage(
+        resolvedStatus === 'active'
+          ? 'Assessment published and active for students!'
+          : resolvedStatus === 'scheduled'
+          ? `Assessment scheduled! It will automatically activate on ${new Date(
+              availableFrom
+            ).toLocaleString()}.`
+          : 'Assessment draft saved successfully.'
+      );
+      setTimeout(() => setSaveBannerMessage(''), 5000);
+    } catch (err) {
+      setSaveErrorMessage(err instanceof Error ? err.message : 'Failed to save assessment.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Warn before leaving if dirty
+  const handleBackSafe = () => {
+    if (isDirty) {
+      if (window.confirm('You have unsaved changes in this assessment. Return to Overview anyway?')) {
+        onBackToOverview();
+      }
+    } else {
+      onBackToOverview();
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-[#0B0F17] text-slate-900 dark:text-slate-100 flex flex-col">
+      {/* ============================================================== */}
+      {/* STAGE 1-3 INITIAL SETUP MODAL (Only when creating brand new)   */}
+      {/* ============================================================== */}
+      {showInitialSetupModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white dark:bg-[#121620] border border-slate-200 dark:border-slate-800 rounded-3xl max-w-2xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[92dvh]">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-900/50">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-[#B91C1C] dark:text-red-400 tabular-nums">
+                  Step {setupStep} of 3
+                </span>
+                <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
+                  {setupStep === 1
+                    ? 'What type of assessment are you creating?'
+                    : setupStep === 2
+                    ? 'How would you like to create this assessment?'
+                    : 'Who is this assessment for?'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={onBackToOverview}
+                className="text-slate-400 hover:text-slate-600 p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 sm:p-6 overflow-y-auto space-y-4">
+              {/* STAGE 1: Assessment Type Selection */}
+              {setupStep === 1 && (
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-500 mb-2">
+                    Select the assessment classification. This controls student portal display and weighting:
+                  </p>
+                  {(
+                    [
+                      {
+                        type: 'ASSIGNMENT' as const,
+                        label: 'Assignment',
+                        desc: 'Homework, practical tasks, or project work with a submission deadline.',
+                      },
+                      {
+                        type: 'TEST' as const,
+                        label: 'Test',
+                        desc: 'Timed periodic test evaluating topic or module retention.',
+                      },
+                      {
+                        type: 'ACTIVITY' as const,
+                        label: 'Activity',
+                        desc: 'In-class practice, coding challenge, or collaborative deliverable.',
+                      },
+                      {
+                        type: 'EXAMINATION' as const,
+                        label: 'Examination',
+                        desc: 'Formal end-of-term assessment with passcodes and strict proctoring.',
+                      },
+                    ] satisfies Array<{ type: AcademicWorkType; label: string; desc: string }>
+                  ).map((item) => (
+                    <label
+                      key={item.type}
+                      onClick={() => setWorkType(item.type)}
+                      className={`p-4 rounded-2xl border flex items-start gap-3.5 cursor-pointer transition-all ${
+                        workType === item.type
+                          ? 'border-[#1E293B] dark:border-slate-300 bg-slate-100/80 dark:bg-slate-800/70 ring-2 ring-[#1E293B]/15 dark:ring-white/15'
+                          : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-white dark:bg-slate-900/40'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="initWorkType"
+                        checked={workType === item.type}
+                        onChange={() => setWorkType(item.type)}
+                        className="mt-1 w-4 h-4 accent-[#B91C1C]"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <span className="font-bold text-sm text-slate-900 dark:text-white block">
+                          {item.label}
+                        </span>
+                        <span className="text-xs text-slate-500 mt-0.5 block leading-relaxed">
+                          {item.desc}
+                        </span>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              {/* STAGE 2: Assessment Format Selection */}
+              {setupStep === 2 && (
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-500 mb-2">
+                    Choose how students will complete this assessment:
+                  </p>
+                  <label
+                    onClick={() => setDeliveryMode('NATIVE')}
+                    className={`p-4 rounded-2xl border flex items-start gap-3.5 cursor-pointer transition-all ${
+                      deliveryMode === 'NATIVE'
+                        ? 'border-[#1E293B] dark:border-slate-300 bg-slate-100/80 dark:bg-slate-800/70 ring-2 ring-[#1E293B]/15 dark:ring-white/15'
+                        : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-white dark:bg-slate-900/40'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="initFormat"
+                      checked={deliveryMode === 'NATIVE'}
+                      onChange={() => setDeliveryMode('NATIVE')}
+                      className="mt-1 w-4 h-4 accent-[#B91C1C]"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <FileText size={16} className="text-[#B91C1C] dark:text-red-400" />
+                        <span className="font-bold text-sm text-slate-900 dark:text-white">
+                          Option A: Native Assessment (Recommended)
+                        </span>
+                      </div>
+                      <span className="text-xs text-slate-500 mt-1 block leading-relaxed">
+                        Create questions directly in Jaystarbliss Studios with structured authoring,
+                        automatic scoring, live candidate proctoring, and question bank importing.
+                      </span>
+                    </div>
+                  </label>
+
+                  <label
+                    onClick={() => setDeliveryMode('EXTERNAL_LINK')}
+                    className={`p-4 rounded-2xl border flex items-start gap-3.5 cursor-pointer transition-all ${
+                      deliveryMode === 'EXTERNAL_LINK'
+                        ? 'border-[#1E293B] dark:border-slate-300 bg-slate-100/80 dark:bg-slate-800/70 ring-2 ring-[#1E293B]/15 dark:ring-white/15'
+                        : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 bg-white dark:bg-slate-900/40'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="initFormat"
+                      checked={deliveryMode === 'EXTERNAL_LINK'}
+                      onChange={() => setDeliveryMode('EXTERNAL_LINK')}
+                      className="mt-1 w-4 h-4 accent-[#B91C1C]"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <ExternalLink size={16} className="text-[#1E293B] dark:text-slate-300" />
+                        <span className="font-bold text-sm text-slate-900 dark:text-white">
+                          Option B: External Third-Party Link
+                        </span>
+                      </div>
+                      <span className="text-xs text-slate-500 mt-1 block leading-relaxed">
+                        Link out to Google Forms, Microsoft Forms, Kahoot, or an external portal. Students will be redirected with their session preserved.
+                      </span>
+                    </div>
+                  </label>
+                </div>
+              )}
+
+              {/* STAGE 3: Target Recipients Selection */}
+              {setupStep === 3 && (
+                <div className="space-y-4">
+                  <p className="text-xs text-slate-500">
+                    Select the schools or private learners who will receive this assessment:
+                  </p>
+
+                  <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300 tabular-nums">
+                        Selected Cohorts ({recipientSummary.totalCount})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowRecipientModal(true)}
+                        className="text-xs font-bold text-[#B91C1C] dark:text-red-400 hover:underline inline-flex items-center gap-1"
+                      >
+                        <Users size={13} /> {recipientSummary.totalCount > 0 ? 'Edit Recipients' : '+ Choose Recipients'}
+                      </button>
+                    </div>
+
+                    {recipientSummary.totalCount === 0 ? (
+                      <div className="p-6 text-center border border-dashed rounded-xl border-slate-300 dark:border-slate-700">
+                        <Users size={28} className="mx-auto text-slate-400 mb-2" />
+                        <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                          No recipients chosen yet
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Click below to select school classes or private students.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setShowRecipientModal(true)}
+                          className="mt-3 px-4 py-2 rounded-xl bg-[#1E293B] hover:bg-[#0F172A] dark:bg-white dark:text-[#1E293B] text-white text-xs font-bold transition-colors"
+                        >
+                          Select Target Recipients
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+                        {recipientSummary.schools.map((name) => (
+                          <span
+                            key={name}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-[#1E293B] dark:text-slate-200"
+                          >
+                            <School size={11} className="text-[#B91C1C] dark:text-red-400" /> {name}
+                          </span>
+                        ))}
+                        {recipientSummary.students.map((name) => (
+                          <span
+                            key={name}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] font-bold text-slate-700 dark:text-slate-300"
+                          >
+                            <User size={11} className="text-slate-500" /> {name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer Controls */}
+            <div className="p-4 sm:p-5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex items-center justify-between">
+              {setupStep > 1 ? (
+                <button
+                  type="button"
+                  onClick={() => setSetupStep((prev) => (prev - 1) as 1 | 2 | 3)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  ← Back
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onBackToOverview}
+                  className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+              )}
+
+              {setupStep < 3 ? (
+                <button
+                  type="button"
+                  onClick={() => setSetupStep((prev) => (prev + 1) as 1 | 2 | 3)}
+                  className="px-5 py-2 rounded-xl bg-[#B91C1C] hover:bg-red-800 text-white text-xs font-bold transition-colors"
+                >
+                  Continue →
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowInitialSetupModal(false);
+                    setActiveTab('questions');
+                  }}
+                  className="px-5 py-2 rounded-xl bg-[#B91C1C] hover:bg-red-800 text-white text-xs font-bold flex items-center gap-1.5 transition-colors"
+                >
+                  Launch Assessment Workspace →
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* GOOGLE FORMS-INSPIRED TOP HEADER BAR (3 TABS: Qs, Responses, Settings) */}
+      {/* ============================================================== */}
+      <header className="sticky top-0 z-30 bg-white/95 dark:bg-[#121620]/95 backdrop-blur-md border-b border-slate-200/90 dark:border-slate-800 shadow-2xs">
+        <div className="max-w-[1440px] mx-auto px-1.5 sm:px-4 lg:px-6">
+          <div className="h-12 sm:h-14 md:h-16 flex items-center justify-between gap-1 sm:gap-3">
+            {/* Left: Back Arrow, Title Input, Badges */}
+            <div className="flex items-center gap-1 sm:gap-2 min-w-0 max-w-[26%] sm:max-w-[30%] md:max-w-md shrink">
+              <button
+                type="button"
+                onClick={handleBackSafe}
+                className="p-1 sm:p-2 rounded-lg sm:rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
+                title="Return to Assessment Overview"
+              >
+                <ArrowLeft size={13} className="sm:w-4 sm:h-4" />
+              </button>
+
+              <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 flex-1">
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => {
+                    setTitle(e.target.value);
+                    markDirty();
+                  }}
+                  placeholder="Untitled Assessment"
+                  className="font-black text-[11px] sm:text-xs md:text-sm text-slate-900 dark:text-white bg-transparent border-b border-transparent hover:border-slate-300 dark:hover:border-slate-700 focus:border-[#1E293B] dark:focus:border-slate-300 focus:outline-none transition-colors truncate w-full py-0.5"
+                />
+                <span className="hidden md:inline-block text-[10px] font-black uppercase tracking-wider text-[#B91C1C] dark:text-red-400 whitespace-nowrap shrink-0">
+                  {workType}
+                </span>
+                {isDirty && (
+                  <span className="inline-flex items-center gap-1 text-[9px] sm:text-[10px] text-[#B91C1C] dark:text-red-400 font-bold whitespace-nowrap shrink-0">
+                    <span aria-hidden="true">·</span>
+                    <span>Unsaved</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Center: 3 Tabs (Questions | Responses | Settings) */}
+            <nav className="flex items-center justify-center gap-0.5 sm:gap-1.5 md:gap-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => setActiveTab('questions')}
+                className={`relative px-1.5 sm:px-3 py-2 sm:py-3 text-[10px] sm:text-xs md:text-sm font-bold transition-colors whitespace-nowrap shrink-0 ${
+                  activeTab === 'questions'
+                    ? 'text-[#1E293B] dark:text-white'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                Questions
+                {activeTab === 'questions' && (
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 sm:h-0.75 bg-[#B91C1C] rounded-t-full" />
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('responses')}
+                className={`relative px-1.5 sm:px-3 py-2 sm:py-3 text-[10px] sm:text-xs md:text-sm font-bold transition-colors inline-flex items-center gap-1 sm:gap-1.5 whitespace-nowrap shrink-0 ${
+                  activeTab === 'responses'
+                    ? 'text-[#1E293B] dark:text-white'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                <span>Responses</span>
+                {examAttempts.length > 0 && (
+                  <span className="text-[9px] sm:text-xs font-black text-[#B91C1C] dark:text-red-400 tabular-nums">
+                    ({examAttempts.length})
+                  </span>
+                )}
+                {activeTab === 'responses' && (
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 sm:h-0.75 bg-[#B91C1C] rounded-t-full" />
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('settings')}
+                className={`relative px-1.5 sm:px-3 py-2 sm:py-3 text-[10px] sm:text-xs md:text-sm font-bold transition-colors inline-flex items-center gap-1 sm:gap-1.5 whitespace-nowrap shrink-0 ${
+                  activeTab === 'settings'
+                    ? 'text-[#1E293B] dark:text-white'
+                    : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                <SettingsIcon size={12} className="hidden sm:inline shrink-0" />
+                <span>Settings</span>
+                {activeTab === 'settings' && (
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 sm:h-0.75 bg-[#B91C1C] rounded-t-full" />
+                )}
+              </button>
+            </nav>
+
+            {/* Right: Actions (Recipients, Preview, Save Draft, Publish) */}
+            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowRecipientModal(true)}
+                className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap shrink-0 tabular-nums"
+                title="Target Cohort Configuration"
+              >
+                <Users size={12} className="text-[#1E293B] dark:text-slate-300 shrink-0" />
+                <span>{recipientSummary.totalCount} Cohorts</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setPreviewAnswers({});
+                  setPreviewSubmitted(false);
+                  setShowPreviewModal(true);
+                  if (onPreviewStudent) {
+                    onPreviewStudent({ title, questions, passcode, workType });
+                  }
+                }}
+                className="p-1 sm:px-2.5 sm:py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[#1E293B] dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 text-[10px] sm:text-xs font-bold inline-flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer"
+                title="Interactive Student Preview"
+              >
+                <Eye size={12} className="shrink-0 text-[#B91C1C] dark:text-red-400" />
+                <span className="hidden sm:inline">Preview</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isSaving}
+                onClick={() => void handleSaveWorkspace('draft')}
+                className="p-1 sm:px-2.5 sm:py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-[10px] sm:text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 inline-flex items-center gap-1 whitespace-nowrap shrink-0"
+                title="Save as Draft"
+              >
+                <Save size={11} className="shrink-0" />
+                <span className="hidden sm:inline">Save</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isSaving}
+                onClick={() =>
+                  void handleSaveWorkspace(
+                    activationMode === 'scheduled' ? 'scheduled' : 'active'
+                  )
+                }
+                className="px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg bg-[#B91C1C] hover:bg-red-800 text-white text-[10px] sm:text-xs font-bold inline-flex items-center gap-1 shadow-xs disabled:opacity-50 whitespace-nowrap shrink-0 transition-colors"
+                title={
+                  activationMode === 'scheduled'
+                    ? 'Schedule Assessment for Later'
+                    : status === 'active'
+                    ? 'Update Active Assessment'
+                    : 'Publish & Activate Assessment Now'
+                }
+              >
+                {activationMode === 'scheduled' ? (
+                  <Calendar size={12} className="shrink-0" />
+                ) : (
+                  <CheckCircle2 size={12} className="shrink-0" />
+                )}
+                <span className="whitespace-nowrap">
+                  {activationMode === 'scheduled'
+                    ? status === 'scheduled'
+                      ? 'Update Schedule'
+                      : 'Schedule'
+                    : status === 'active'
+                    ? 'Update'
+                    : 'Publish Now'}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Banner Notifications */}
+      {saveBannerMessage && (
+        <div className="bg-[#1E293B] text-white px-4 py-2 text-xs font-bold text-center flex items-center justify-center gap-2">
+          <CheckCircle2 size={15} className="text-red-400" /> {saveBannerMessage}
+        </div>
+      )}
+      {saveErrorMessage && (
+        <div className="bg-[#B91C1C] text-white px-4 py-2 text-xs font-bold text-center flex items-center justify-center gap-2">
+          <AlertCircle size={15} /> {saveErrorMessage}
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* WORKSPACE CONTENT BODY (DYNAMICALLY SWITCHES TABS)             */}
+      {/* ============================================================== */}
+      <main className="flex-1 max-w-4xl w-full mx-auto p-3 sm:p-6 pb-20 space-y-5">
+        {/* ============================================================== */}
+        {/* TAB 1: QUESTIONS                                               */}
+        {/* ============================================================== */}
+        {activeTab === 'questions' && (
+          <div className="space-y-4">
+            {/* Assessment Details Top Header Card */}
+            <div className="rounded-2xl border-t-8 border-t-[#1E293B] border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-[#121620] p-5 sm:p-7 shadow-xs space-y-4">
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => {
+                    setTitle(e.target.value);
+                    markDirty();
+                  }}
+                  placeholder="Assessment Title (e.g. Term 1 Web Development Exam)"
+                  className="w-full text-xl sm:text-2xl font-black text-slate-900 dark:text-white bg-transparent border-b border-transparent hover:border-slate-200 dark:hover:border-slate-700 focus:border-[#1E293B] dark:focus:border-slate-300 focus:outline-none py-1"
+                />
+                <textarea
+                  rows={2}
+                  value={description}
+                  onChange={(e) => {
+                    setDescription(e.target.value);
+                    markDirty();
+                  }}
+                  placeholder="Detailed instructions / assessment brief for students..."
+                  className="w-full text-xs text-slate-600 dark:text-slate-400 bg-transparent border-b border-transparent hover:border-slate-200 dark:hover:border-slate-700 focus:border-[#1E293B] dark:focus:border-slate-300 focus:outline-none resize-none py-1"
+                />
+              </div>
+
+              {/* Assessment Type, Enrolled Programme, Dynamic Subject/Module & Target Class Row */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <label className="block">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Assessment Type
+                  </span>
+                  <select
+                    value={workType}
+                    onChange={(e) => {
+                      const nextType = e.target.value as AcademicWorkType;
+                      setWorkType(nextType);
+                      if (nextType === 'TEST' || nextType === 'EXAMINATION') {
+                        setHasPasscode(true);
+                        if (!passcode.trim()) setPasscode(generateAccessCode());
+                      }
+                      markDirty();
+                    }}
+                    className="w-full mt-1 h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900 px-3 text-xs font-bold"
+                  >
+                    <option value="ASSIGNMENT">Assignment</option>
+                    <option value="ACTIVITY">Activity</option>
+                    <option value="TEST">Test (Passcode Required)</option>
+                    <option value="EXAMINATION">Examination (Passcode Required)</option>
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Registered Programme ({recipientEnrolledPrograms.length})
+                  </span>
+                  <select
+                    value={programId || programTitle}
+                    onChange={(e) => {
+                      const chosenVal = e.target.value;
+                      const found = recipientEnrolledPrograms.find(
+                        (p) => p.id === chosenVal || p.title === chosenVal
+                      );
+                      if (found) {
+                        setProgramId(found.id);
+                        setProgramTitle(found.title);
+                        setProgramBreadcrumbs(found.title);
+                        setPrimaryCategory(found.title);
+                      } else {
+                        setProgramId(chosenVal);
+                        setProgramTitle(chosenVal);
+                      }
+                      markDirty();
+                    }}
+                    className="w-full mt-1 h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900 px-3 text-xs font-semibold"
+                  >
+                    {recipientEnrolledPrograms.map((prog) => (
+                      <option key={prog.id} value={prog.id}>
+                        {prog.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Subject / Sub-Programme / Module
+                  </span>
+                  {availableProgramSubjects.length > 0 ? (
+                    <select
+                      value={
+                        availableProgramSubjects.some(
+                          (s) => s.title.toLowerCase() === subject.trim().toLowerCase()
+                        )
+                          ? availableProgramSubjects.find(
+                              (s) => s.title.toLowerCase() === subject.trim().toLowerCase()
+                            )!.title
+                          : subject
+                      }
+                      onChange={(e) => {
+                        setSubject(e.target.value);
+                        markDirty();
+                      }}
+                      className="w-full mt-1 h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900 px-3 text-xs font-semibold"
+                    >
+                      {!availableProgramSubjects.some(
+                        (s) => s.title.toLowerCase() === subject.trim().toLowerCase()
+                      ) &&
+                        subject.trim() && <option value={subject}>{subject}</option>}
+                      {availableProgramSubjects.map((sub) => (
+                        <option key={sub.id} value={sub.title}>
+                          {sub.title}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={subject}
+                      onChange={(e) => {
+                        setSubject(e.target.value);
+                        markDirty();
+                      }}
+                      placeholder="Select or enter subject..."
+                      className="w-full mt-1 h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900 px-3 text-xs font-semibold"
+                    />
+                  )}
+                </label>
+
+                <label className="block">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Target Class / Level
+                  </span>
+                  <select
+                    value={targetClass}
+                    onChange={(e) => {
+                      setTargetClass(e.target.value);
+                      markDirty();
+                    }}
+                    className="w-full mt-1 h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900 px-3 text-xs font-semibold"
+                  >
+                    {CANONICAL_CLASSES.map((cls) => (
+                      <option key={cls} value={cls}>
+                        {cls}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              {/* Deliverables, Due Date & Quick Activation / Schedule Row */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <label className="block sm:col-span-1">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Deliverables / Submission Expectations
+                  </span>
+                  <input
+                    type="text"
+                    value={deliverables}
+                    onChange={(e) => {
+                      setDeliverables(e.target.value);
+                      markDirty();
+                    }}
+                    placeholder="e.g. Complete all questions or attach project link"
+                    className="w-full mt-1 h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900 px-3 text-xs font-semibold"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Due Date (Optional)
+                  </span>
+                  <input
+                    type="date"
+                    value={dueDate ? dueDate.slice(0, 10) : ''}
+                    onChange={(e) => {
+                      setDueDate(e.target.value);
+                      markDirty();
+                    }}
+                    className="w-full mt-1 h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900 px-3 text-xs font-semibold"
+                  />
+                </label>
+
+                <div className="block">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                    Activation Mode
+                  </span>
+                  <div className="mt-1 grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActivationMode('now');
+                        markDirty();
+                      }}
+                      className={`h-9 rounded-xl text-[11px] font-bold border transition-all ${
+                        activationMode === 'now'
+                          ? 'border-[#1E293B] bg-[#1E293B] text-white dark:bg-white dark:text-[#1E293B] dark:border-white'
+                          : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      Activate Now
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActivationMode('scheduled');
+                        markDirty();
+                      }}
+                      className={`h-9 rounded-xl text-[11px] font-bold border transition-all ${
+                        activationMode === 'scheduled'
+                          ? 'border-[#1E293B] bg-[#1E293B] text-white dark:bg-white dark:text-[#1E293B] dark:border-white'
+                          : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      Schedule Later
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {activationMode === 'scheduled' && (
+                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <Calendar size={14} className="text-[#B91C1C] dark:text-red-400" /> Scheduled Activation Date &amp; Time
+                    </p>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                      Students will not be able to unlock or view the passcode until this scheduled time arrives.
+                    </p>
+                  </div>
+                  <input
+                    type="datetime-local"
+                    value={availableFrom}
+                    onChange={(e) => {
+                      setAvailableFrom(e.target.value);
+                      markDirty();
+                    }}
+                    className="h-9 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs font-bold shrink-0 tabular-nums focus:border-[#1E293B] focus:outline-none"
+                  />
+                </div>
+              )}
+
+              {/* Dedicated Learning Resources / Reference Materials Studio Section */}
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5 tabular-nums">
+                      <BookOpen size={13} className="text-[#B91C1C] dark:text-red-400" /> Learning Resources &amp; Reference Materials ({learningResources.length})
+                    </span>
+                    <p className="text-[11px] text-slate-500">
+                      Attach lesson documents, Google Drive PDFs, slides, or YouTube tutorial videos for students to review inside the assessment.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLearningResources((prev) => [
+                        ...prev,
+                        {
+                          id: makeId(),
+                          title: '',
+                          instructions: '',
+                          url: '',
+                          youtubeUrl: '',
+                        },
+                      ]);
+                      markDirty();
+                    }}
+                    className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-[#1E293B] dark:text-slate-200 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 inline-flex items-center gap-1 shrink-0 transition-colors"
+                  >
+                    <Plus size={13} className="text-[#B91C1C] dark:text-red-400" /> Add Resource
+                  </button>
+                </div>
+
+                {learningResources.length > 0 && (
+                  <div className="space-y-3">
+                    {learningResources.map((resItem, rIdx) => (
+                      <div
+                        key={resItem.id}
+                        className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/50 space-y-2.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                            Resource #{rIdx + 1}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLearningResources((prev) =>
+                                prev.filter((_, i) => i !== rIdx)
+                              );
+                              markDirty();
+                            }}
+                            className="text-red-600 hover:text-red-700 text-[11px] font-bold inline-flex items-center gap-1"
+                          >
+                            <Trash2 size={12} /> Remove
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          <input
+                            type="text"
+                            value={resItem.title}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setLearningResources((prev) =>
+                                prev.map((item, i) =>
+                                  i === rIdx ? { ...item, title: val } : item
+                                )
+                              );
+                              markDirty();
+                            }}
+                            placeholder="Resource Title (e.g. Module 2 Lecture Notes)"
+                            className="h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs font-semibold"
+                          />
+                          <input
+                            type="text"
+                            value={resItem.instructions}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setLearningResources((prev) =>
+                                prev.map((item, i) =>
+                                  i === rIdx ? { ...item, instructions: val } : item
+                                )
+                              );
+                              markDirty();
+                            }}
+                            placeholder="Study instructions / notes for this resource..."
+                            className="h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs"
+                          />
+                          <input
+                            type="url"
+                            value={resItem.url}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setLearningResources((prev) =>
+                                prev.map((item, i) =>
+                                  i === rIdx ? { ...item, url: val } : item
+                                )
+                              );
+                              markDirty();
+                            }}
+                            placeholder="Document / Google Drive / Slide Link (https://...)"
+                            className="h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs"
+                          />
+                          <input
+                            type="url"
+                            value={resItem.youtubeUrl}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setLearningResources((prev) =>
+                                prev.map((item, i) =>
+                                  i === rIdx ? { ...item, youtubeUrl: val } : item
+                                )
+                              );
+                              markDirty();
+                            }}
+                            placeholder="YouTube Video URL (optional, https://youtube.com/...)"
+                            className="h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* External Link Setup Banner (If External Link delivery mode) */}
+              {deliveryMode === 'EXTERNAL_LINK' && (
+                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 space-y-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[#1E293B] dark:text-slate-200 flex items-center gap-1.5">
+                    <ExternalLink size={13} className="text-[#B91C1C] dark:text-red-400" /> External Third-Party Assessment URL
+                  </span>
+                  <input
+                    type="url"
+                    value={externalUrl}
+                    onChange={(e) => {
+                      setExternalUrl(e.target.value);
+                      markDirty();
+                    }}
+                    placeholder="https://docs.google.com/forms/d/e/... or https://forms.office.com/..."
+                    className="w-full h-10 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs font-semibold focus:border-[#1E293B] focus:outline-none"
+                  />
+                  <p className="text-[11px] text-slate-500">
+                    Students will click to launch this external test. Their participation will be marked when they submit.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Native Question Builder List (Only if Native delivery mode) */}
+            {deliveryMode === 'NATIVE' ? (
+              <div className="space-y-4">
+                {/* Floating/Top Controls: Add Question & Import Questions */}
+                <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-white dark:bg-[#121620] border border-slate-200/90 dark:border-slate-800 shadow-2xs">
+                  <div className="flex items-center gap-2 text-xs tabular-nums">
+                    <span className="font-bold text-slate-500">
+                      {questions.length} Question(s)
+                    </span>
+                    <span aria-hidden="true" className="text-slate-300 dark:text-slate-700">·</span>
+                    <span className="font-black text-[#1E293B] dark:text-white">
+                      {totalMarks} Total Marks
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowImportModal(true)}
+                      className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-[#1E293B] dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 inline-flex items-center gap-1.5"
+                    >
+                      <Sparkles size={13} className="text-[#B91C1C] dark:text-red-400" />
+                      <span>Import Questions</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddQuestion()}
+                      className="px-3.5 py-1.5 rounded-xl bg-[#B91C1C] hover:bg-red-800 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs transition-colors"
+                    >
+                      <Plus size={14} />
+                      <span>Add Question</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Question Cards */}
+                {questions.map((q, idx) => (
+                  <NativeQuestionCard
+                    key={q.id}
+                    question={q}
+                    index={idx}
+                    totalQuestions={questions.length}
+                    isActive={activeQuestionId === q.id}
+                    onFocus={() => setActiveQuestionId(q.id)}
+                    onChange={(updated) => handleUpdateQuestion(idx, updated)}
+                    onDuplicate={() => handleDuplicateQuestion(idx)}
+                    onDelete={() => handleDeleteQuestion(idx)}
+                    onMoveUp={() => handleMoveQuestion(idx, 'up')}
+                    onMoveDown={() => handleMoveQuestion(idx, 'down')}
+                    onAddAbove={() => handleAddQuestion(idx - 1)}
+                    onAddBelow={() => handleAddQuestion(idx)}
+                  />
+                ))}
+
+                {/* Bottom Add Bar */}
+                <div className="pt-2 text-center">
+                  <button
+                    type="button"
+                    onClick={() => handleAddQuestion()}
+                    className="px-5 py-2.5 rounded-2xl border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-[#B91C1C] text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-[#B91C1C] dark:hover:text-red-400 transition-colors inline-flex items-center gap-2"
+                  >
+                    <Plus size={15} /> Add Another Question
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="p-8 text-center border border-dashed rounded-2xl border-slate-300 dark:border-slate-700 text-xs text-slate-500">
+                Native question builder is disabled because this assessment uses an <strong>External Link</strong>.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* TAB 2: RESPONSES                                              */}
+        {/* ============================================================== */}
+        {activeTab === 'responses' && (
+          <div className="space-y-5">
+            {/* Responses Top Action Bar */}
+            <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-[#121620] p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tabular-nums">
+                  {examAttempts.length} Response(s)
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Real-time participant activity, automatic grading, submissions, and marks release.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
+                  <span>Accepting responses</span>
+                  <input
+                    type="checkbox"
+                    checked={status === 'active'}
+                    onChange={(e) => {
+                      setStatus(e.target.checked ? 'active' : 'draft');
+                      markDirty();
+                    }}
+                    className="w-4 h-4 accent-[#B91C1C] rounded"
+                  />
+                </label>
+
+                {examAttempts.some(
+                  (at) =>
+                    !at.resultReleased &&
+                    ['submitted', 'completed', 'graded', 'expired'].includes(at.status)
+                ) &&
+                  onReleaseAllSubmitted && (
+                    <button
+                      type="button"
+                      disabled={bulkReleasingResults}
+                      onClick={async () => {
+                        setBulkReleasingResults(true);
+                        try {
+                          await onReleaseAllSubmitted();
+                          setSaveBannerMessage('Released all pending student results.');
+                        } finally {
+                          setBulkReleasingResults(false);
+                        }
+                      }}
+                      className="px-3.5 py-2 rounded-xl bg-[#B91C1C] hover:bg-red-800 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-xs tabular-nums transition-colors"
+                    >
+                      <CheckCircle2 size={14} />
+                      <span>
+                        {bulkReleasingResults
+                          ? 'Releasing…'
+                          : `Release All Pending (${
+                              examAttempts.filter(
+                                (at) =>
+                                  !at.resultReleased &&
+                                  ['submitted', 'completed', 'graded', 'expired'].includes(at.status)
+                              ).length
+                            })`}
+                      </span>
+                    </button>
+                  )}
+
+                {onExportCsv && (
+                  <button
+                    type="button"
+                    onClick={onExportCsv}
+                    disabled={!examAttempts.length}
+                    className="px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-[#1E293B] dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 inline-flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Download size={14} className="text-[#B91C1C] dark:text-red-400" /> Export CSV
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* 4 Summary Stat Strip */}
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#121620] grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 dark:divide-slate-800 overflow-hidden shadow-2xs">
+              <div className="p-3.5 sm:p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Taking Exam
+                  </span>
+                  {proctorMetrics.onlineActiveCount > 0 && (
+                    <span className="w-2 h-2 rounded-full bg-[#B91C1C] animate-ping" />
+                  )}
+                </div>
+                <p className="text-2xl font-black text-[#1E293B] dark:text-white mt-1 tabular-nums">
+                  {proctorMetrics.onlineActiveCount}
+                </p>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Online &amp; Active
+                </p>
+              </div>
+
+              <div className="p-3.5 sm:p-4">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Offline / Stalled
+                </span>
+                <p className="text-2xl font-black text-[#B91C1C] dark:text-red-400 mt-1 tabular-nums">
+                  {proctorMetrics.offlineInProgressCount}
+                </p>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Disconnected &gt; 2m
+                </p>
+              </div>
+
+              <div className="p-3.5 sm:p-4">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Completed
+                </span>
+                <p className="text-2xl font-black text-[#1E293B] dark:text-white mt-1 tabular-nums">
+                  {proctorMetrics.submittedCompletedCount}
+                </p>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Submitted final answers
+                </p>
+              </div>
+
+              <div className="p-3.5 sm:p-4">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Not Started
+                </span>
+                <p className="text-2xl font-black text-slate-700 dark:text-slate-200 mt-1 tabular-nums">
+                  {proctorMetrics.notStartedCount}
+                </p>
+                <p className="text-[10px] text-slate-500 mt-0.5">Eligible candidates</p>
+              </div>
+            </div>
+
+            {/* Responses Sub-Tabs Bar */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+              {(
+                [
+                  { id: 'live', label: `Live Roster (${proctorMetrics.onlineActiveCount})`, icon: Activity },
+                  { id: 'summary', label: 'Summary Insights', icon: BarChart3 },
+                  { id: 'question', label: 'By Question', icon: FileText },
+                  { id: 'individual', label: 'Individual Review', icon: Users },
+                ] as const
+              ).map((sub) => {
+                const Icon = sub.icon;
+                const isCur = responsesSubTab === sub.id;
+                return (
+                  <button
+                    key={sub.id}
+                    type="button"
+                    onClick={() => setResponsesSubTab(sub.id)}
+                    className={`px-3 sm:px-4 py-2 text-xs font-bold rounded-xl transition-all inline-flex items-center gap-1.5 tabular-nums ${
+                      isCur
+                        ? 'bg-[#1E293B] dark:bg-white text-white dark:text-[#1E293B] shadow-xs'
+                        : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    <Icon size={13} className={isCur ? 'text-red-400 dark:text-[#B91C1C]' : ''} />
+                    <span>{sub.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Sub-Tab 1: Live Roster Table */}
+            {responsesSubTab === 'live' && (
+              <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-[#121620] overflow-hidden shadow-xs">
+                {examAttempts.length === 0 ? (
+                  <div className="p-10 text-center text-xs text-slate-500">
+                    No student has started this assessment yet. Share the access code{' '}
+                    <strong className="font-mono">{passcode}</strong> with eligible learners.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-50 dark:bg-slate-900/60 text-slate-500 font-bold uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
+                        <tr>
+                          <th className="px-4 py-3">Student Name</th>
+                          <th className="px-4 py-3">Class / School</th>
+                          <th className="px-4 py-3">Status</th>
+                          <th className="px-4 py-3">Progress</th>
+                          <th className="px-4 py-3">Score</th>
+                          <th className="px-4 py-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {examAttempts.map((at) => {
+                          const isSubmitted = ['submitted', 'completed', 'graded', 'expired'].includes(at.status);
+                          const answeredCount = Object.keys(at.answers || {}).length;
+
+                          return (
+                            <tr
+                              key={at.id}
+                              className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                            >
+                              <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">
+                                {at.studentName}
+                              </td>
+                              <td className="px-4 py-3 text-slate-500">
+                                {at.className || at.schoolName || 'Enrolled Student'}
+                              </td>
+                              <td className="px-4 py-3">
+                                {isSubmitted ? (
+                                  <span
+                                    className={`inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider ${
+                                      at.resultReleased
+                                        ? 'text-[#1E293B] dark:text-white'
+                                        : 'text-[#B91C1C] dark:text-red-400'
+                                    }`}
+                                  >
+                                    <CheckCircle2 size={11} />
+                                    {at.resultReleased ? 'Released' : 'Submitted'}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                    <Activity size={11} className="text-[#B91C1C] dark:text-red-400" /> In Progress
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 font-semibold text-slate-600 dark:text-slate-300 tabular-nums">
+                                {answeredCount} / {questions.length} answered
+                              </td>
+                              <td className="px-4 py-3 font-bold tabular-nums">
+                                {isSubmitted
+                                  ? `${at.score ?? 0} / ${at.maxScore ?? totalMarks} (${at.percentage ?? 0}%)`
+                                  : '—'}
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <div className="inline-flex items-center justify-end gap-2">
+                                  {isSubmitted && onReleaseResult && (
+                                    <button
+                                      type="button"
+                                      disabled={releasingResultId === at.id}
+                                      onClick={async () => {
+                                        setReleasingResultId(at.id);
+                                        try {
+                                          await onReleaseResult(at);
+                                        } finally {
+                                          setReleasingResultId(null);
+                                        }
+                                      }}
+                                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors ${
+                                        at.resultReleased
+                                          ? 'border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-[#1E293B] dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'
+                                          : 'bg-[#B91C1C] text-white hover:bg-red-800'
+                                      }`}
+                                    >
+                                      {at.resultReleased ? 'Released' : 'Release Result'}
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedAttemptId(at.id);
+                                      setResponsesSubTab('individual');
+                                    }}
+                                    className="px-3 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800"
+                                  >
+                                    View
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Sub-Tab 2: Summary Insights */}
+            {responsesSubTab === 'summary' && (
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-[#121620] p-5 shadow-xs space-y-4">
+                  <h4 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
+                    <BarChart3 size={16} className="text-[#B91C1C] dark:text-red-400" /> Performance Insights
+                  </h4>
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 dark:divide-slate-800 overflow-hidden">
+                    <div className="p-4 text-center">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        Average
+                      </span>
+                      <p className="text-xl font-black text-slate-900 dark:text-white mt-1 tabular-nums">
+                        {summaryInsights.avgScore} / {totalMarks} pts
+                      </p>
+                    </div>
+                    <div className="p-4 text-center">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        Median
+                      </span>
+                      <p className="text-xl font-black text-slate-900 dark:text-white mt-1 tabular-nums">
+                        {summaryInsights.medianScore} / {totalMarks} pts
+                      </p>
+                    </div>
+                    <div className="p-4 text-center">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                        Score Range
+                      </span>
+                      <p className="text-xl font-black text-slate-900 dark:text-white mt-1 tabular-nums">
+                        {summaryInsights.rangeMin} - {summaryInsights.rangeMax} pts
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Frequently Missed Questions */}
+                  {summaryInsights.frequentlyMissed.length > 0 && (
+                    <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                      <span className="text-xs font-bold text-[#B91C1C] dark:text-red-400">
+                        Frequently Missed Questions (&lt; 60% accuracy)
+                      </span>
+                      <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {summaryInsights.frequentlyMissed.map((item, idx) => (
+                          <div key={idx} className="py-2 flex items-center justify-between gap-3 text-xs">
+                            <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                              {item.prompt}
+                            </span>
+                            <span className="text-[11px] font-black text-[#B91C1C] dark:text-red-400 shrink-0 tabular-nums">
+                              {item.correctRate}% correct
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Sub-Tab 3: By Question */}
+            {responsesSubTab === 'question' && (
+              <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-[#121620] p-5 shadow-xs space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={selectedQuestionIndex <= 0}
+                      onClick={() => setSelectedQuestionIndex((prev) => Math.max(0, prev - 1))}
+                      className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 disabled:opacity-30"
+                    >
+                      <ArrowLeft size={14} />
+                    </button>
+                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300 tabular-nums">
+                      Question {selectedQuestionIndex + 1} of {questions.length}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={selectedQuestionIndex >= questions.length - 1}
+                      onClick={() =>
+                        setSelectedQuestionIndex((prev) => Math.min(questions.length - 1, prev + 1))
+                      }
+                      className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 disabled:opacity-30 rotate-180"
+                    >
+                      <ArrowLeft size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                {questions[selectedQuestionIndex] && (
+                  <div className="space-y-3 pt-2">
+                    <h4 className="font-black text-sm text-slate-900 dark:text-white">
+                      {questions[selectedQuestionIndex].prompt || 'Untitled Question'}
+                    </h4>
+                    <div className="space-y-2">
+                      {questions[selectedQuestionIndex].options?.map((opt) => {
+                        const isCorrect = questions[selectedQuestionIndex].correctOptionIds?.includes(opt.id);
+                        return (
+                          <div
+                            key={opt.id}
+                            className={`p-3 rounded-xl border flex items-center justify-between gap-2 text-xs font-semibold ${
+                              isCorrect
+                                ? 'border-[#1E293B] dark:border-slate-300 bg-slate-100/80 dark:bg-slate-800/70 text-[#1E293B] dark:text-white'
+                                : 'border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/40'
+                            }`}
+                          >
+                            <span>
+                              {opt.id}. {opt.text}
+                            </span>
+                            {isCorrect && (
+                              <span className="text-[10px] uppercase font-black tracking-wider text-[#B91C1C] dark:text-red-400 shrink-0">
+                                Correct Answer
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Sub-Tab 4: Individual Review & Grading Workbench */}
+            {responsesSubTab === 'individual' && (
+              <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-[#121620] p-5 shadow-xs space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-500">Student:</span>
+                    <select
+                      value={selectedAttemptId || examAttempts[0]?.id || ''}
+                      onChange={(e) => setSelectedAttemptId(e.target.value)}
+                      className="h-9 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs font-bold focus:border-[#1E293B] focus:outline-none tabular-nums"
+                    >
+                      {examAttempts.map((at, i) => (
+                        <option key={at.id} value={at.id}>
+                          {i + 1}. {at.studentName} ({at.score ?? 0}/{at.maxScore ?? totalMarks} pts)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {(() => {
+                  const targetAttempt = examAttempts.find(
+                    (a) => a.id === (selectedAttemptId || examAttempts[0]?.id)
+                  );
+                  if (!targetAttempt) {
+                    return (
+                      <div className="p-8 text-center text-xs text-slate-500">
+                        No attempt selected or available.
+                      </div>
+                    );
+                  }
+
+                  const attemptMax = Number(targetAttempt.maxScore ?? totalMarks) || 100;
+                  const itemScores = manualScoresByAttempt[targetAttempt.id] || {};
+                  const currentRemark =
+                    tutorRemarksByAttempt[targetAttempt.id] ??
+                    targetAttempt.feedback ??
+                    targetAttempt.tutorFeedback ??
+                    '';
+
+                  return (
+                    <div className="space-y-4">
+                      {/* Overall Score Override Bar */}
+                      <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <p className="font-black text-sm text-slate-900 dark:text-white">
+                            {targetAttempt.studentName}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {targetAttempt.className || 'Enrolled Student'} · Status: {targetAttempt.status}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                            Total Score:
+                          </span>
+                          <span className="font-black text-base text-[#1E293B] dark:text-white tabular-nums">
+                            {targetAttempt.score ?? 0} / {attemptMax} pts ({targetAttempt.percentage ?? 0}%)
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Tutor Feedback Panel */}
+                      <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                            <MessageSquare size={14} className="text-[#B91C1C] dark:text-red-400" /> Tutor Feedback &amp; Remarks
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {TUTOR_REMARK_PRESETS.map((pre) => (
+                            <button
+                              key={pre.id}
+                              type="button"
+                              onClick={() => {
+                                setTutorRemarksByAttempt((prev) => ({
+                                  ...prev,
+                                  [targetAttempt.id]: pre.text,
+                                }));
+                              }}
+                              className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[11px] font-semibold hover:border-[#1E293B] dark:hover:border-slate-400 transition-colors"
+                            >
+                              {pre.label}
+                            </button>
+                          ))}
+                        </div>
+                        <textarea
+                          rows={2}
+                          value={currentRemark}
+                          onChange={(e) => {
+                            setTutorRemarksByAttempt((prev) => ({
+                              ...prev,
+                              [targetAttempt.id]: e.target.value,
+                            }));
+                          }}
+                          placeholder="Constructive feedback for this student's result..."
+                          className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-2.5 text-xs focus:border-[#1E293B] focus:outline-none"
+                        />
+                        {onSaveTutorRemark && (
+                          <div className="text-right">
+                            <button
+                              type="button"
+                              onClick={() => void onSaveTutorRemark(targetAttempt, currentRemark)}
+                              className="px-3 py-1.5 rounded-lg bg-[#1E293B] hover:bg-[#0F172A] dark:bg-white dark:text-[#1E293B] text-white text-xs font-bold transition-colors"
+                            >
+                              Save Feedback Only
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Question Breakdown and Student Answers */}
+                      <div className="space-y-3">
+                        {questions.map((q, idx) => {
+                          const rawAns = targetAttempt.answers?.[q.id] ?? targetAttempt.answers?.[String(idx + 1)];
+                          const existingQr = Array.isArray(targetAttempt.questionResults)
+                            ? targetAttempt.questionResults.find((r: any) => r.questionId === q.id)
+                            : null;
+                          const currentScore =
+                            itemScores[q.id] !== undefined
+                              ? itemScores[q.id]
+                              : existingQr?.pointsAwarded !== undefined
+                              ? existingQr.pointsAwarded
+                              : 0;
+
+                          return (
+                            <div
+                              key={q.id || idx}
+                              className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/40 text-xs space-y-2.5"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-slate-900 dark:text-white">
+                                  {idx + 1}. {q.prompt}
+                                </span>
+                                <div className="flex items-center gap-2 tabular-nums">
+                                  <span className="font-semibold text-slate-500">Marks:</span>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={q.points}
+                                    step={0.5}
+                                    value={currentScore}
+                                    onChange={(e) => {
+                                      const val = Number(e.target.value);
+                                      setManualScoresByAttempt((prev) => ({
+                                        ...prev,
+                                        [targetAttempt.id]: {
+                                          ...(prev[targetAttempt.id] || {}),
+                                          [q.id]: val,
+                                        },
+                                      }));
+                                    }}
+                                    className="w-16 h-8 rounded-lg border border-slate-300 dark:border-slate-700 px-2 text-center font-bold tabular-nums focus:border-[#1E293B] focus:outline-none"
+                                  />
+                                  <span>/ {q.points} pts</span>
+                                </div>
+                              </div>
+
+                              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700 space-y-2">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                                  Student Response:
+                                </span>
+                                {(() => {
+                                  if (rawAns === undefined || rawAns === null || rawAns === '') {
+                                    return (
+                                      <p className="italic text-slate-400">No response provided</p>
+                                    );
+                                  }
+                                  let displayText = '';
+                                  let linkUrl = '';
+                                  let fileDataUrl = '';
+                                  let fileName = '';
+
+                                  if (typeof rawAns === 'string') {
+                                    const trimmed = rawAns.trim();
+                                    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+                                      try {
+                                        const parsed = JSON.parse(trimmed);
+                                        displayText = String(parsed.textResponse || '').trim();
+                                        linkUrl = String(parsed.linkUrl || '').trim();
+                                        fileDataUrl = String(parsed.fileDataUrl || '').trim();
+                                        fileName = String(parsed.fileName || '').trim();
+                                      } catch {
+                                        displayText = trimmed;
+                                      }
+                                    } else if (/^https?:\/\//i.test(trimmed)) {
+                                      linkUrl = trimmed;
+                                      displayText = trimmed;
+                                    } else {
+                                      displayText = trimmed;
+                                      const match = trimmed.match(/https?:\/\/[^\s"'<>]+/i);
+                                      if (match) linkUrl = match[0];
+                                    }
+                                  } else if (Array.isArray(rawAns)) {
+                                    displayText = rawAns
+                                      .map((id) => {
+                                        const opt = q.options?.find((o) => String(o.id) === String(id));
+                                        return opt ? `${opt.id}. ${opt.text}` : String(id);
+                                      })
+                                      .join(', ');
+                                  } else if (typeof rawAns === 'object') {
+                                    displayText = String((rawAns as any).textResponse || '').trim();
+                                    linkUrl = String((rawAns as any).linkUrl || '').trim();
+                                    fileDataUrl = String((rawAns as any).fileDataUrl || '').trim();
+                                    fileName = String((rawAns as any).fileName || '').trim();
+                                  } else {
+                                    displayText = String(rawAns);
+                                  }
+
+                                  if (
+                                    !linkUrl &&
+                                    !fileDataUrl &&
+                                    ['single_choice', 'true_false', 'dropdown'].includes(q.type)
+                                  ) {
+                                    const opt = q.options?.find(
+                                      (o) => String(o.id) === String(rawAns)
+                                    );
+                                    if (opt) displayText = `${opt.id}. ${opt.text}`;
+                                  }
+
+                                  return (
+                                    <div className="space-y-2">
+                                      {displayText && (
+                                        <p className="font-semibold whitespace-pre-wrap break-words text-slate-900 dark:text-white">
+                                          {displayText}
+                                        </p>
+                                      )}
+                                      {linkUrl && (
+                                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                                            <a
+                                              href={linkUrl}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="inline-flex items-center gap-1.5 rounded-lg bg-[#1E293B] hover:bg-[#0F172A] dark:bg-white dark:text-[#1E293B] px-3 py-1.5 text-[11px] font-bold text-white transition-colors"
+                                            >
+                                              <ExternalLink size={12} />
+                                              Open Submitted Link
+                                            </a>
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                navigator.clipboard?.writeText(linkUrl);
+                                                setSaveBannerMessage('Submitted link copied to clipboard!');
+                                              }}
+                                              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[11px] font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 cursor-pointer"
+                                            >
+                                              <Copy size={12} />
+                                              Copy Link
+                                            </button>
+                                          </div>
+                                        )}
+                                        {fileDataUrl && (
+                                          <div className="pt-1">
+                                            <a
+                                              href={fileDataUrl}
+                                              download={fileName || 'submitted-file'}
+                                              className="inline-flex items-center gap-1.5 rounded-lg bg-[#1E293B] hover:bg-[#0F172A] dark:bg-white dark:text-[#1E293B] px-3 py-1.5 text-[11px] font-bold text-white transition-colors"
+                                            >
+                                              <Download size={12} />
+                                              Download Attached File ({fileName || 'Deliverable'})
+                                            </a>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Grade Save Action Footer */}
+                        {onSaveManualGrade && (
+                          <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">
+                            <button
+                              type="button"
+                              disabled={savingGradeId === targetAttempt.id}
+                              onClick={async () => {
+                                setSavingGradeId(targetAttempt.id);
+                                try {
+                                  await onSaveManualGrade(targetAttempt, false, {
+                                    itemScores,
+                                    remark: currentRemark,
+                                  });
+                                  setSaveBannerMessage(`Saved grade for ${targetAttempt.studentName}.`);
+                                } finally {
+                                  setSavingGradeId(null);
+                                }
+                              }}
+                              className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold hover:bg-slate-50"
+                            >
+                              Save Grade
+                            </button>
+                            <button
+                              type="button"
+                              disabled={savingGradeId === targetAttempt.id}
+                              onClick={async () => {
+                                setSavingGradeId(targetAttempt.id);
+                                try {
+                                  await onSaveManualGrade(targetAttempt, true, {
+                                    itemScores,
+                                    remark: currentRemark,
+                                  });
+                                  setSaveBannerMessage(`Saved and released result to ${targetAttempt.studentName}.`);
+                                } finally {
+                                  setSavingGradeId(null);
+                                }
+                              }}
+                              className="px-4 py-2 rounded-xl bg-[#B91C1C] hover:bg-red-800 text-white text-xs font-bold transition-colors"
+                            >
+                              Save Grade &amp; Release Result
+                            </button>
+                          </div>
+                        )}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* TAB 3: SETTINGS                                                */}
+        {/* ============================================================== */}
+        {activeTab === 'settings' && (
+          <div className="space-y-5">
+            {/* SECTION A: Quiz & Grading Configuration */}
+            <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-[#121620] p-5 sm:p-7 shadow-xs space-y-6">
+              <div className="flex items-center justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
+                <div>
+                  <h4 className="font-bold text-base text-slate-900 dark:text-white">
+                    Quiz &amp; Grading Configuration
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Assign points, enable automatic objective scoring, and set grade release rules.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={makeQuiz}
+                  onChange={(e) => {
+                    setMakeQuiz(e.target.checked);
+                    markDirty();
+                  }}
+                  className="w-5 h-5 accent-[#B91C1C] rounded cursor-pointer"
+                />
+              </div>
+
+              {/* Grading Mode: Automatic vs Manual */}
+              <div className="space-y-3">
+                <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">
+                  Grading Mode
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label
+                    onClick={() => {
+                      setGradingMode('automatic');
+                      setReleaseGradesPolicy('immediate');
+                      markDirty();
+                    }}
+                    className={`p-4 rounded-2xl border cursor-pointer flex items-start gap-3 transition-all ${
+                      gradingMode === 'automatic'
+                        ? 'border-[#1E293B] dark:border-slate-300 bg-slate-100/80 dark:bg-slate-800/70 ring-1 ring-[#1E293B]/20 dark:ring-white/15'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/40'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="settingsGradingMode"
+                      checked={gradingMode === 'automatic'}
+                      onChange={() => {
+                        setGradingMode('automatic');
+                        setReleaseGradesPolicy('immediate');
+                      }}
+                      className="mt-1 accent-[#B91C1C]"
+                    />
+                    <div>
+                      <p className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white">
+                        Automatic Objective Grading (Show Score Immediately)
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Automatically evaluate responses on submission and show students their score immediately after finishing.
+                      </p>
+                    </div>
+                  </label>
+
+                  <label
+                    onClick={() => {
+                      setGradingMode('manual');
+                      setReleaseGradesPolicy('manual');
+                      markDirty();
+                    }}
+                    className={`p-4 rounded-2xl border cursor-pointer flex items-start gap-3 transition-all ${
+                      gradingMode === 'manual'
+                        ? 'border-[#1E293B] dark:border-slate-300 bg-slate-100/80 dark:bg-slate-800/70 ring-1 ring-[#1E293B]/20 dark:ring-white/15'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/40'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="settingsGradingMode"
+                      checked={gradingMode === 'manual'}
+                      onChange={() => {
+                        setGradingMode('manual');
+                        setReleaseGradesPolicy('manual');
+                      }}
+                      className="mt-1 accent-[#B91C1C]"
+                    />
+                    <div>
+                      <p className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white">
+                        Manual Tutor Review
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Hold all submissions for tutor marking before scores and remarks are finalised.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Release Grades Policy */}
+              <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">
+                  Release Grades Policy
+                </span>
+                <div className="space-y-2 text-xs">
+                  <label className="flex items-center gap-2.5 font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="releasePolicy"
+                      checked={releaseGradesPolicy === 'immediate'}
+                      onChange={() => {
+                        setReleaseGradesPolicy('immediate');
+                        setGradingMode('automatic');
+                        markDirty();
+                      }}
+                      className="accent-[#B91C1C]"
+                    />
+                    <span>Immediately after each student submission (Automatic Grading)</span>
+                  </label>
+                  <label className="flex items-center gap-2.5 font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="releasePolicy"
+                      checked={releaseGradesPolicy === 'manual'}
+                      onChange={() => {
+                        setReleaseGradesPolicy('manual');
+                        markDirty();
+                      }}
+                      className="accent-[#B91C1C]"
+                    />
+                    <span>Later, after manual review (requires explicit tutor result release)</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Respondent Visibility Options */}
+              <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">
+                  Respondent Visibility
+                </span>
+                <div className="space-y-3">
+                  <label className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+                    <div>
+                      <p>Missed questions</p>
+                      <p className="text-[11px] text-slate-500 font-normal">
+                        Candidates can see which questions were answered incorrectly.
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={showMissedQuestions}
+                      onChange={(e) => {
+                        setShowMissedQuestions(e.target.checked);
+                        markDirty();
+                      }}
+                      className="w-4 h-4 accent-[#B91C1C] rounded cursor-pointer"
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+                    <div>
+                      <p>Correct answers</p>
+                      <p className="text-[11px] text-slate-500 font-normal">
+                        Candidates can view correct answer keys after grades are released.
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={showCorrectAnswers}
+                      onChange={(e) => {
+                        setShowCorrectAnswers(e.target.checked);
+                        markDirty();
+                      }}
+                      className="w-4 h-4 accent-[#B91C1C] rounded cursor-pointer"
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+                    <div>
+                      <p>Point values</p>
+                      <p className="text-[11px] text-slate-500 font-normal">
+                        Candidates can view total points and points received for each question.
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={showPointValues}
+                      onChange={(e) => {
+                        setShowPointValues(e.target.checked);
+                        markDirty();
+                      }}
+                      className="w-4 h-4 accent-[#B91C1C] rounded cursor-pointer"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Default Points */}
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3 text-xs font-semibold">
+                <div>
+                  <p>Default question point value</p>
+                  <p className="text-[11px] text-slate-500 font-normal">
+                    Initial point value allocated to newly added questions.
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0 tabular-nums">
+                  <input
+                    type="number"
+                    min={0.5}
+                    max={100}
+                    value={defaultPointValue}
+                    onChange={(e) => {
+                      setDefaultPointValue(Math.max(0.5, Number(e.target.value) || 2));
+                      markDirty();
+                    }}
+                    className="w-16 h-9 rounded-xl border border-slate-200 dark:border-slate-700 text-center font-bold bg-white dark:bg-slate-900 tabular-nums focus:border-[#1E293B] focus:outline-none"
+                  />
+                  <span>points</span>
+                </div>
+              </div>
+            </div>
+
+            {/* SECTION B: Access Security, Attempts & Schedule */}
+            <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-[#121620] p-5 sm:p-7 shadow-xs space-y-6">
+              <h4 className="font-bold text-base text-slate-900 dark:text-white">
+                Access Security, Attempts &amp; Timing
+              </h4>
+
+              {/* Passcode Protection */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                        Passcode Protection
+                      </span>
+                      {isPasscodeMandatory && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-[#B91C1C] dark:text-red-400">
+                          <span aria-hidden="true">·</span>
+                          <Lock size={10} /> Mandatory for {workType === 'TEST' ? 'Tests' : 'Examinations'}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {isPasscodeMandatory
+                        ? `Passcode protection is required for all ${
+                            workType === 'TEST' ? 'Tests' : 'Examinations'
+                          } and cannot be unchecked. Students will receive this passcode when the assessment becomes active.`
+                        : 'Optional for Assignments and Activities. Require students to enter an access code before beginning.'}
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={isPasscodeMandatory ? true : hasPasscode}
+                    disabled={isPasscodeMandatory}
+                    onChange={(e) => {
+                      if (isPasscodeMandatory) return;
+                      setHasPasscode(e.target.checked);
+                      markDirty();
+                    }}
+                    className={`w-4 h-4 accent-[#B91C1C] rounded ${
+                      isPasscodeMandatory ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
+                    }`}
+                  />
+                </div>
+
+                {(isPasscodeMandatory || hasPasscode) && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="text"
+                      value={passcode}
+                      onChange={(e) => {
+                        setPasscode(e.target.value.toUpperCase());
+                        markDirty();
+                      }}
+                      className="h-10 flex-1 max-w-xs rounded-xl border border-slate-200 dark:border-slate-700 px-3 text-xs font-mono font-bold uppercase bg-white dark:bg-slate-900 focus:border-[#1E293B] focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPasscode(generateAccessCode());
+                        markDirty();
+                      }}
+                      className="px-3 h-10 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800"
+                    >
+                      Generate New
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(passcode);
+                        setSaveBannerMessage('Passcode copied to clipboard.');
+                        setTimeout(() => setSaveBannerMessage(''), 3000);
+                      }}
+                      className="px-3 h-10 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-800"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Optional Time Limit */}
+              <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                      Set a Time Limit (Optional)
+                    </span>
+                    <p className="text-[11px] text-slate-500 tabular-nums">
+                      {hasTimeLimit
+                        ? `Students will see a ${durationMinutes}-minute countdown timer and the assessment will auto-submit when time expires.`
+                        : 'No time limit is set. No countdown timer will be shown to students.'}
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={hasTimeLimit}
+                    onChange={(e) => {
+                      setHasTimeLimit(e.target.checked);
+                      markDirty();
+                    }}
+                    className="w-4 h-4 accent-[#B91C1C] rounded cursor-pointer"
+                  />
+                </div>
+
+                {hasTimeLimit && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="number"
+                      min={1}
+                      max={525600}
+                      value={durationMinutes}
+                      onChange={(e) => {
+                        setDurationMinutes(Math.max(1, Number(e.target.value) || 30));
+                        markDirty();
+                      }}
+                      className="w-28 h-10 rounded-xl border border-slate-200 dark:border-slate-700 px-3 text-xs font-bold text-center bg-white dark:bg-slate-900 tabular-nums focus:border-[#1E293B] focus:outline-none"
+                    />
+                    <span className="text-xs font-semibold text-slate-500">minutes</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Activation & Scheduling Options (Activate Now vs Schedule for Later) */}
+              <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">
+                  Assessment Availability &amp; Scheduling
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label
+                    onClick={() => {
+                      setActivationMode('now');
+                      markDirty();
+                    }}
+                    className={`p-4 rounded-2xl border cursor-pointer flex items-start gap-3 transition-all ${
+                      activationMode === 'now'
+                        ? 'border-[#1E293B] dark:border-slate-300 bg-slate-100/80 dark:bg-slate-800/70 ring-1 ring-[#1E293B]/20 dark:ring-white/15'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/40'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="settingsActivationMode"
+                      checked={activationMode === 'now'}
+                      onChange={() => setActivationMode('now')}
+                      className="mt-1 accent-[#B91C1C]"
+                    />
+                    <div>
+                      <p className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white">
+                        Option A: Activate Now
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Make this assessment active immediately upon publishing and notify eligible students right away.
+                      </p>
+                    </div>
+                  </label>
+
+                  <label
+                    onClick={() => {
+                      setActivationMode('scheduled');
+                      markDirty();
+                    }}
+                    className={`p-4 rounded-2xl border cursor-pointer flex items-start gap-3 transition-all ${
+                      activationMode === 'scheduled'
+                        ? 'border-[#1E293B] dark:border-slate-300 bg-slate-100/80 dark:bg-slate-800/70 ring-1 ring-[#1E293B]/20 dark:ring-white/15'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/40'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="settingsActivationMode"
+                      checked={activationMode === 'scheduled'}
+                      onChange={() => setActivationMode('scheduled')}
+                      className="mt-1 accent-[#B91C1C]"
+                    />
+                    <div>
+                      <p className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white">
+                        Option B: Schedule for Later
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Keep the assessment locked until the scheduled date &amp; time, then automatically activate and send the passcode to students.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                  {activationMode === 'scheduled' && (
+                    <label className="block">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-[#B91C1C] dark:text-red-400">
+                        Scheduled Activation Date &amp; Time *
+                      </span>
+                      <input
+                        type="datetime-local"
+                        value={availableFrom}
+                        onChange={(e) => {
+                          setAvailableFrom(e.target.value);
+                          markDirty();
+                        }}
+                        className="w-full mt-1 h-10 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs font-bold tabular-nums focus:border-[#1E293B] focus:outline-none"
+                      />
+                    </label>
+                  )}
+
+                  <label className="block">
+                    <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">
+                      Available Until / Closing Deadline (Optional)
+                    </span>
+                    <input
+                      type="datetime-local"
+                      value={availableUntil}
+                      onChange={(e) => {
+                        setAvailableUntil(e.target.value);
+                        markDirty();
+                      }}
+                      className="w-full mt-1 h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs tabular-nums focus:border-[#1E293B] focus:outline-none"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Attempt Limits & Shuffle */}
+              <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs">
+                <label className="flex items-center justify-between gap-3 font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p>Limit to 1 attempt</p>
+                      <span
+                        className={`text-[10px] font-black uppercase tracking-wider ${
+                          limitOneAttempt
+                            ? 'text-slate-500 dark:text-slate-400'
+                            : 'text-[#B91C1C] dark:text-red-400'
+                        }`}
+                      >
+                        <span aria-hidden="true">· </span>
+                        {limitOneAttempt ? '1 Attempt Only' : 'Retakes Enabled'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 font-normal mt-0.5">
+                      {limitOneAttempt
+                        ? 'Students can only submit once per student record. Uncheck this box to allow students to retake this assessment.'
+                        : 'Unchecked — Students will see a "Retake" button after submitting and under their Completed Assessments so they can retake this assessment.'}
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={limitOneAttempt}
+                    onChange={(e) => {
+                      setLimitOneAttempt(e.target.checked);
+                      markDirty();
+                    }}
+                    className="w-4 h-4 accent-[#B91C1C] rounded cursor-pointer"
+                  />
+                </label>
+
+                <label className="flex items-center justify-between gap-3 font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+                  <span>Shuffle question order for each candidate</span>
+                  <input
+                    type="checkbox"
+                    checked={shuffleQuestions}
+                    onChange={(e) => {
+                      setShuffleQuestions(e.target.checked);
+                      markDirty();
+                    }}
+                    className="w-4 h-4 accent-[#B91C1C] rounded cursor-pointer"
+                  />
+                </label>
+
+                <label className="flex items-center justify-between gap-3 font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+                  <span>Shuffle option choices for multiple choice questions</span>
+                  <input
+                    type="checkbox"
+                    checked={shuffleOptions}
+                    onChange={(e) => {
+                      setShuffleOptions(e.target.checked);
+                      markDirty();
+                    }}
+                    className="w-4 h-4 accent-[#B91C1C] rounded cursor-pointer"
+                  />
+                </label>
+
+                <div className="pt-2">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">
+                    Submission Confirmation Message
+                  </span>
+                  <input
+                    type="text"
+                    value={confirmationMessage}
+                    onChange={(e) => {
+                      setConfirmationMessage(e.target.value);
+                      markDirty();
+                    }}
+                    placeholder="e.g. Your response has been recorded. Good job!"
+                    className="w-full mt-1 h-10 rounded-xl border border-slate-200 dark:border-slate-700 px-3 text-xs bg-white dark:bg-slate-900 focus:border-[#1E293B] focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Interactive Student Assessment Preview Modal */}
+      {showPreviewModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-white dark:bg-[#11151F] border border-slate-200 dark:border-slate-800 rounded-2xl max-w-4xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[92dvh]">
+            {/* Top Preview Bar */}
+            <div className="bg-[#1E293B] text-white px-4 py-3.5 sm:px-6 sm:py-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-700/80">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-wider">
+                  <span className="inline-flex items-center gap-1 text-red-400">
+                    <Eye size={11} /> Student View Preview · {workType}
+                  </span>
+                  <span aria-hidden="true" className="text-slate-500">·</span>
+                  <span className="text-slate-300">
+                    {limitOneAttempt ? '1 Attempt Max' : 'Retakes Allowed'}
+                  </span>
+                  <span aria-hidden="true" className="text-slate-500">·</span>
+                  <span className="text-slate-300">
+                    {gradingMode === 'automatic' && releaseGradesPolicy === 'immediate'
+                      ? 'Auto-Graded (Immediate Score)'
+                      : 'Manual Tutor Review'}
+                  </span>
+                </div>
+                <h3 className="text-base sm:text-lg font-black text-white mt-1 break-words">
+                  {title.trim() || 'Untitled Assessment'}
+                </h3>
+                <p className="text-xs text-slate-300 tabular-nums">
+                  {programTitle} · {subject} · Target: {targetClass} · Total Marks: {totalMarks}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {hasTimeLimit ? (
+                  <div className="rounded-xl border border-white/15 bg-white/10 px-3 py-1.5 flex items-center gap-2">
+                    <Clock size={15} className="text-red-400 shrink-0" />
+                    <div>
+                      <span className="block text-[9px] uppercase tracking-wider font-bold text-slate-300 leading-none">
+                        Time Limit
+                      </span>
+                      <span className="font-mono text-sm font-black text-white leading-none tabular-nums">
+                        {String(durationMinutes).padStart(2, '0')}:00
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <span className="rounded-xl border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-bold text-slate-300">
+                    No Time Limit
+                  </span>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setPreviewShowKey((prev) => !prev)}
+                  className={`px-3 py-1.5 rounded-xl border text-xs font-bold cursor-pointer transition-colors ${
+                    previewShowKey
+                      ? 'border-[#B91C1C] bg-[#B91C1C] text-white'
+                      : 'border-white/15 bg-white/5 text-slate-200 hover:bg-white/10'
+                  }`}
+                >
+                  {previewShowKey ? 'Hide Answer Key' : 'Show Answer Key'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowPreviewModal(false)}
+                  className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white cursor-pointer"
+                  aria-label="Close preview"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Preview Body */}
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-5 flex-1 bg-slate-50 dark:bg-[#0D111A]">
+              {/* Security & Schedule Summary Strip */}
+              <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/70 grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 dark:divide-slate-800 overflow-hidden text-xs">
+                <div className="p-3">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                    Passcode Gate
+                  </span>
+                  <p className="font-bold text-slate-900 dark:text-white mt-0.5 tabular-nums">
+                    {isPasscodeMandatory || hasPasscode
+                      ? `Required (${passcode || 'Auto-Generated'})`
+                      : 'No Passcode Required'}
+                  </p>
+                </div>
+                <div className="p-3">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                    Due Date / Closing
+                  </span>
+                  <p className="font-bold text-slate-900 dark:text-white mt-0.5 tabular-nums">
+                    {dueDate || availableUntil
+                      ? new Date(dueDate || availableUntil).toLocaleDateString()
+                      : 'Open (No Closing Date Set)'}
+                  </p>
+                </div>
+                <div className="p-3">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                    Target Recipients
+                  </span>
+                  <p className="font-bold text-slate-900 dark:text-white mt-0.5">
+                    {recipientSummary.label}
+                  </p>
+                </div>
+              </div>
+
+              {/* Instructions, Deliverables & Embedded Learning Media */}
+              {(description.trim() || deliverables.trim() || learningResources.some((r) => r.url || r.youtubeUrl)) && (
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3">
+                  {description.trim() && (
+                    <div>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-[#1E293B] dark:text-white block">
+                        Instructions
+                      </span>
+                      <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-200 whitespace-pre-wrap mt-1">
+                        {description}
+                      </p>
+                    </div>
+                  )}
+                  {deliverables.trim() && (
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-[#B91C1C] dark:text-red-400 block">
+                        Expected Deliverables
+                      </span>
+                      <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-200 whitespace-pre-wrap mt-1">
+                        {deliverables}
+                      </p>
+                    </div>
+                  )}
+                  {learningResources
+                    .filter((r) => r.url.trim() || r.youtubeUrl.trim())
+                    .map((res, rIdx) => (
+                      <div key={res.id || rIdx} className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                        <EmbeddedLearningMedia
+                          url={res.youtubeUrl.trim() || res.url.trim()}
+                          title={res.title || `Reference Resource ${rIdx + 1}`}
+                          hideExternalLink={false}
+                        />
+                      </div>
+                    ))}
+                </div>
+              )}
+
+              {/* External Link Delivery Mode Preview */}
+              {deliveryMode === 'EXTERNAL_LINK' ? (
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 text-center space-y-3">
+                  <ExternalLink size={32} className="mx-auto text-[#B91C1C] dark:text-red-400" />
+                  <h4 className="font-bold text-base text-slate-900 dark:text-white">
+                    External Link {workType}
+                  </h4>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    Students will unlock and launch the external assessment URL below:
+                  </p>
+                  {externalUrl ? (
+                    <a
+                      href={externalUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 rounded-xl bg-[#1E293B] hover:bg-[#0F172A] dark:bg-white dark:text-[#1E293B] text-white px-5 py-2.5 text-xs font-bold transition-colors"
+                    >
+                      Test External Link <ExternalLink size={14} />
+                    </a>
+                  ) : (
+                    <p className="text-xs font-semibold text-[#B91C1C] dark:text-red-400">
+                      No external URL entered yet.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                /* Native Questions Interactive Try-Out */
+                <div className="space-y-4">
+                  {previewSubmitted && (
+                    <div className="rounded-2xl border border-[#1E293B] dark:border-slate-300 bg-slate-100/80 dark:bg-slate-800/60 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <span className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-[#B91C1C] dark:text-red-400">
+                          <CheckCircle2 size={15} /> Simulated Student Submission Result
+                        </span>
+                        <p className="text-sm font-bold text-slate-900 dark:text-white">
+                          {confirmationMessage || 'Your response has been recorded. Good job!'}
+                        </p>
+                        {gradingMode === 'automatic' && releaseGradesPolicy === 'immediate' ? (
+                          <p className="text-xs font-bold text-[#1E293B] dark:text-white tabular-nums">
+                            Immediate Score Displayed to Student:{' '}
+                            {questions.reduce((acc, q) => {
+                              const ans = previewAnswers[q.id];
+                              const expected = Array.isArray(q.correctOptionIds) ? q.correctOptionIds : [];
+                              if (
+                                ['multiple_choice', 'single_choice', 'true_false', 'dropdown'].includes(q.type)
+                              ) {
+                                return expected.includes(String(ans || '')) ? acc + (Number(q.points) || 0) : acc;
+                              }
+                              return acc;
+                            }, 0)}{' '}
+                            / {totalMarks} pts
+                          </p>
+                        ) : (
+                          <p className="text-xs text-slate-600 dark:text-slate-300 font-semibold">
+                            Score is held for Tutor Review before release (as configured in Settings).
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        {!limitOneAttempt && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPreviewAnswers({});
+                              setPreviewSubmitted(false);
+                            }}
+                            className="px-4 py-2 rounded-xl bg-[#1E293B] hover:bg-[#0F172A] dark:bg-white dark:text-[#1E293B] text-white text-xs font-bold cursor-pointer transition-colors"
+                          >
+                            Retake {workType.charAt(0) + workType.slice(1).toLowerCase()} (Student Retake Button)
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setPreviewSubmitted(false)}
+                          className="px-3.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer"
+                        >
+                          Edit Preview Answers
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {questions.map((q, qIdx) => {
+                    const selectedVal = previewAnswers[q.id];
+                    const correctIds = Array.isArray(q.correctOptionIds) ? q.correctOptionIds : [];
+                    return (
+                      <div
+                        key={q.id || qIdx}
+                        className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 sm:p-5 space-y-3 shadow-2xs"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <h4 className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white">
+                            <span className="text-[#B91C1C] dark:text-red-400 mr-1.5 tabular-nums">
+                              Q{qIdx + 1}.
+                            </span>
+                            {q.prompt || <span className="italic text-slate-400">Untitled question prompt</span>}
+                          </h4>
+                          {showPointValues && (
+                            <span className="shrink-0 text-[11px] font-bold text-slate-500 dark:text-slate-400 tabular-nums">
+                              {q.points} {q.points === 1 ? 'mark' : 'marks'}
+                            </span>
+                          )}
+                        </div>
+
+                        {Array.isArray(q.options) &&
+                        q.options.length > 0 &&
+                        ['multiple_choice', 'single_choice', 'true_false', 'checkboxes', 'dropdown'].includes(
+                          q.type
+                        ) ? (
+                          <div className="space-y-2 pt-1">
+                            {q.options.map((opt) => {
+                              const isSelected =
+                                Array.isArray(selectedVal)
+                                  ? selectedVal.includes(opt.id)
+                                  : String(selectedVal || '') === String(opt.id);
+                              const isCorrectOpt = correctIds.includes(opt.id);
+                              return (
+                                <label
+                                  key={opt.id}
+                                  onClick={() => {
+                                    if (previewSubmitted) return;
+                                    if (q.type === 'checkboxes') {
+                                      const prevArr = Array.isArray(selectedVal) ? selectedVal : [];
+                                      const nextArr = prevArr.includes(opt.id)
+                                        ? prevArr.filter((i: string) => i !== opt.id)
+                                        : [...prevArr, opt.id];
+                                      setPreviewAnswers((p) => ({ ...p, [q.id]: nextArr }));
+                                    } else {
+                                      setPreviewAnswers((p) => ({ ...p, [q.id]: opt.id }));
+                                    }
+                                  }}
+                                  className={`flex items-center justify-between gap-3 p-3 rounded-xl border text-xs font-semibold cursor-pointer transition-all ${
+                                    isSelected
+                                      ? 'border-[#1E293B] dark:border-slate-300 bg-slate-100/80 dark:bg-slate-800/70 text-[#1E293B] dark:text-white'
+                                      : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2.5">
+                                    <span className="w-6 h-6 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-[11px] font-black text-slate-700 dark:text-slate-300">
+                                      {opt.id}
+                                    </span>
+                                    <span>{opt.text}</span>
+                                  </div>
+                                  {(previewShowKey || (previewSubmitted && showCorrectAnswers)) &&
+                                    isCorrectOpt && (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-[#B91C1C] dark:text-red-400">
+                                        <Check size={11} /> Correct Key
+                                      </span>
+                                    )}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="pt-1 space-y-2">
+                            <textarea
+                              rows={2}
+                              disabled={previewSubmitted}
+                              value={String(selectedVal || '')}
+                              onChange={(e) =>
+                                setPreviewAnswers((p) => ({ ...p, [q.id]: e.target.value }))
+                              }
+                              placeholder="Student types response or pastes deliverable link here..."
+                              className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3 text-xs focus:border-[#1E293B] focus:outline-none"
+                            />
+                            {(previewShowKey || (previewSubmitted && showCorrectAnswers)) &&
+                              Array.isArray(q.acceptedAnswers) &&
+                              q.acceptedAnswers.length > 0 && (
+                                <p className="text-[11px] font-bold text-[#1E293B] dark:text-white">
+                                  Accepted Answer Key: {q.acceptedAnswers.join(', ')}
+                                </p>
+                              )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Preview Footer */}
+            <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-wrap items-center justify-between gap-3">
+              <span className="text-xs text-slate-500 tabular-nums">
+                Previewing exact student layout · {questions.length} question(s) · {totalMarks} total marks
+              </span>
+              <div className="flex items-center gap-2">
+                {deliveryMode === 'NATIVE' && !previewSubmitted && (
+                  <button
+                    type="button"
+                    onClick={() => setPreviewSubmitted(true)}
+                    className="px-4 py-2 rounded-xl bg-[#B91C1C] hover:bg-red-800 text-white text-xs font-bold cursor-pointer transition-colors"
+                  >
+                    Simulate Student Submit
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowPreviewModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  Close Preview
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Recipient Selector Modal */}
+      <RecipientSelectorModal
+        isOpen={showRecipientModal}
+        onClose={() => setShowRecipientModal(false)}
+        availableSchools={assignedSchools}
+        availablePrivateStudents={assignedPrivateStudents}
+        schoolStudents={assignedSchoolStudents}
+        initialSelectedSchoolIds={targetSchoolIds}
+        initialSelectedStudentIds={targetStudentIds}
+        isTutor={isTutor}
+        onConfirm={(res) => {
+          setTargetSchoolIds(res.targetSchoolIds);
+          setTargetStudentIds(res.targetStudentIds);
+          setRecipientMode(res.recipientMode);
+          if (res.selectedClasses && res.selectedClasses.length > 0) {
+            setTargetClass(res.selectedClasses[0]);
+          }
+          markDirty();
+          setShowRecipientModal(false);
+        }}
+      />
+
+      {/* Import Questions Modal (Text, CSV, Bank) */}
+      <ImportQuestionsModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onImportQuestions={handleImportBatchQuestions}
+        questionBankItems={questionBankItems}
+        defaultPointValue={defaultPointValue}
+      />
+    </div>
+  );
+};

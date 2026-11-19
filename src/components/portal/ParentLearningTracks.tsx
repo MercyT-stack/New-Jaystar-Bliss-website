@@ -1,0 +1,520 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { auth } from '../../lib/firebase';
+import {
+  BookOpen,
+  CheckCircle2,
+  Clock,
+  GraduationCap,
+  Folder,
+  FolderOpen,
+  ChevronRight,
+  ChevronDown,
+  Award,
+  Lock,
+  AlertCircle,
+  Send,
+  X,
+} from 'lucide-react';
+import {
+  type ProgramRecord,
+  fetchAllProgramsMap,
+} from '../../lib/programHierarchy';
+import {
+  type ComputedProgramNodeProgress,
+  type StudentUnitProgressRecord,
+  type PriorLearningRecognitionRecord,
+  type PriorLearningRecognitionType,
+  calculateStudentPathwayProgress,
+  fetchStudentProgressRecords,
+  fetchStudentPriorLearningRecognitions,
+  submitPriorLearningRecognition,
+} from '../../lib/learningPathwayEngine';
+
+interface Props {
+  students?: any[];
+}
+
+export const ParentLearningTracks: React.FC<Props> = ({ students = [] }) => {
+  const [programsMap, setProgramsMap] = useState<Map<string, ProgramRecord>>(new Map());
+  const [progressByStudent, setProgressByStudent] = useState<
+    Record<string, StudentUnitProgressRecord[]>
+  >({});
+  const [priorByStudent, setPriorByStudent] = useState<
+    Record<string, PriorLearningRecognitionRecord[]>
+  >({});
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+
+  // Parent Prior-Learning Request Modal State
+  const [requestModalTarget, setRequestModalTarget] = useState<{
+    student: any;
+    node: ComputedProgramNodeProgress;
+  } | null>(null);
+  const [reqType, setReqType] = useState<PriorLearningRecognitionType>('PRIOR_COMPLETION');
+  const [reqEvidence, setReqEvidence] = useState('');
+  const [reqNotes, setReqNotes] = useState('');
+  const [submittingReq, setSubmittingReq] = useState(false);
+
+  const loadAll = async () => {
+    setLoading(true);
+    try {
+      const progMap = await fetchAllProgramsMap();
+      setProgramsMap(progMap);
+
+      const progMapByStudent: Record<string, StudentUnitProgressRecord[]> = {};
+      const priorMapByStudent: Record<string, PriorLearningRecognitionRecord[]> = {};
+
+      await Promise.all(
+        students.map(async (s) => {
+          if (!s?.id) return;
+          const [pDocs, prDocs] = await Promise.all([
+            fetchStudentProgressRecords(s.id),
+            fetchStudentPriorLearningRecognitions(s.id),
+          ]);
+          progMapByStudent[s.id] = pDocs;
+          priorMapByStudent[s.id] = prDocs;
+        })
+      );
+
+      setProgressByStudent(progMapByStudent);
+      setPriorByStudent(priorMapByStudent);
+
+      // Default expand all nodes so parents can immediately inspect branches
+      const allIds = new Set<string>();
+      progMap.forEach((p) => allIds.add(p.id));
+      setExpandedNodes(allIds);
+    } catch (err) {
+      console.error('Error loading parent learning tracks:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (students.length > 0) {
+      loadAll();
+    } else {
+      setLoading(false);
+    }
+  }, [students]);
+
+  const toggleExpand = (key: string) => {
+    setExpandedNodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const handleSubmitParentPriorRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!requestModalTarget) return;
+    setSubmittingReq(true);
+    try {
+      const user = auth.currentUser;
+      await submitPriorLearningRecognition({
+        studentId: requestModalTarget.student.id,
+        studentName:
+          requestModalTarget.student.fullName ||
+          requestModalTarget.student.studentName ||
+          requestModalTarget.student.name,
+        program: requestModalTarget.node.program,
+        programsMap,
+        recognitionType: reqType,
+        evidenceReference: reqEvidence,
+        verificationNotes: reqNotes,
+        actorUid: user?.uid || 'parent',
+        actorName: user?.displayName || user?.email || 'Parent',
+        actorRole: 'PARENT',
+        approveImmediately: false,
+      });
+      setFeedbackMsg(
+        `Submitted Prior-Learning Recognition request for "${requestModalTarget.node.program.title}". It will be credited once verified by your child's tutor or administrator.`
+      );
+      setRequestModalTarget(null);
+      setReqEvidence('');
+      setReqNotes('');
+      await loadAll();
+    } catch (err: any) {
+      setFeedbackMsg(err?.message || 'Failed to submit prior-learning request.');
+    } finally {
+      setSubmittingReq(false);
+    }
+  };
+
+  const renderStatusLabel = (node: ComputedProgramNodeProgress) => {
+    const status = node.children.length > 0 && !node.isHybrid ? node.status : node.selfStatus;
+    if (status === 'PRIOR_LEARNING_APPROVED') {
+      return (
+        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-800 dark:text-slate-200">
+          <Award size={12} className="text-brand-red shrink-0" aria-hidden="true" /> Prior Learning Approved
+        </span>
+      );
+    }
+    if (status === 'COMPLETED') {
+      return (
+        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-800 dark:text-slate-200">
+          <CheckCircle2 size={12} className="text-slate-900 dark:text-white shrink-0" aria-hidden="true" /> Completed
+        </span>
+      );
+    }
+    if (status === 'CURRENT') {
+      return (
+        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-brand-red">
+          <Clock size={12} className="shrink-0" aria-hidden="true" /> Currently Learning
+        </span>
+      );
+    }
+    if (status === 'LOCKED') {
+      return (
+        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+          <Lock size={12} className="shrink-0" aria-hidden="true" /> Locked (Prerequisite Required)
+        </span>
+      );
+    }
+    if (status === 'OPTIONAL') {
+      return (
+        <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+          Optional Unit
+        </span>
+      );
+    }
+    return (
+      <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+        Upcoming
+      </span>
+    );
+  };
+
+  const renderChildBranch = (student: any, node: ComputedProgramNodeProgress) => {
+    const p = node.program;
+    const expandKey = `${student.id}_${p.id}`;
+    const hasChildren = node.children.length > 0;
+    const isExpanded = expandedNodes.has(expandKey) || expandedNodes.has(p.id);
+    const countsOwnUnit =
+      node.isDirectlyEnrolledScope &&
+      !node.isContainer &&
+      (node.children.length === 0 || node.isHybrid);
+    const pct = hasChildren && !countsOwnUnit ? node.aggregateProgress : node.selfProgress;
+
+    return (
+      <div key={p.id} className="select-none">
+        <div
+          className={`p-3.5 rounded-xl border mb-2 transition-colors ${
+            node.selfStatus === 'PRIOR_LEARNING_APPROVED' || node.status === 'COMPLETED'
+              ? 'bg-slate-50 dark:bg-slate-900/70 border-slate-300 dark:border-slate-700'
+              : node.status === 'CURRENT'
+              ? 'bg-red-50/40 dark:bg-red-950/15 border-red-200 dark:border-red-900/50'
+              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
+          }`}
+          style={{ marginLeft: `${Math.min(node.depth, 8) * 18}px` }}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5 min-w-0 flex-1">
+              {hasChildren ? (
+                <button
+                  type="button"
+                  onClick={() => toggleExpand(expandKey)}
+                  className="mt-0.5 p-1 rounded hover:bg-slate-200/60 dark:hover:bg-slate-800 text-slate-600 cursor-pointer"
+                >
+                  {isExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                </button>
+              ) : (
+                <span className="w-4 text-center text-slate-300 mt-0.5">•</span>
+              )}
+
+              <div className="mt-0.5 shrink-0">
+                {hasChildren || node.isContainer ? (
+                  isExpanded ? (
+                    <FolderOpen size={17} className="text-brand-red" />
+                  ) : (
+                    <Folder size={17} className="text-brand-red" />
+                  )
+                ) : (
+                  <BookOpen size={16} className="text-slate-700 dark:text-slate-300" />
+                )}
+              </div>
+
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                  <span className="font-bold text-sm text-slate-900 dark:text-white">
+                    {p.title}
+                  </span>
+                  {hasChildren && (
+                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300 tabular-nums">
+                      — {pct}% complete
+                    </span>
+                  )}
+                  <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">·</span>
+                  {renderStatusLabel(node)}
+                  <span className="text-slate-300 dark:text-slate-700" aria-hidden="true">·</span>
+                  <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    {node.isRequiredForStudent ? 'Required' : 'Optional'}
+                  </span>
+                </div>
+
+                <div className="text-[11px] text-slate-500">
+                  Path: {node.breadcrumbPath}
+                </div>
+
+                {node.tutorNotes && (
+                  <div className="text-[11px] bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-lg text-slate-700 dark:text-slate-300">
+                    <strong>Tutor Feedback:</strong> {node.tutorNotes}
+                  </div>
+                )}
+
+                {node.priorLearningRecord?.status === 'PENDING' && (
+                  <div className="text-[11px] text-brand-red dark:text-red-300 bg-red-50/60 dark:bg-red-950/20 px-2.5 py-1 rounded-lg font-medium">
+                    Prior-Learning Recognition Request Pending Tutor Verification
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="w-28">
+                <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-1">
+                  <span>{hasChildren && !countsOwnUnit ? 'Branch' : 'Unit'}</span>
+                  <span className="text-slate-900 dark:text-white tabular-nums">{pct}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    className={`h-full transition-all ${
+                      pct >= 100 ? 'bg-slate-900 dark:bg-white' : 'bg-brand-red'
+                    }`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+
+              {countsOwnUnit &&
+                node.selfStatus !== 'COMPLETED' &&
+                node.selfStatus !== 'PRIOR_LEARNING_APPROVED' &&
+                node.priorLearningRecord?.status !== 'PENDING' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRequestModalTarget({ student, node });
+                      setReqEvidence('');
+                      setReqNotes('');
+                    }}
+                    className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 text-[10px] font-bold hover:border-brand-red hover:text-brand-red cursor-pointer"
+                    title="Request Prior-Learning Recognition if your child already completed this module"
+                  >
+                    Request Prior Credit
+                  </button>
+                )}
+            </div>
+          </div>
+        </div>
+
+        {hasChildren && isExpanded && (
+          <div className="space-y-1">
+            {node.children.map((child) => renderChildBranch(student, child))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  if (loading) {
+    return (
+      <div className="p-6 text-center text-slate-500">
+        Loading your children&apos;s recursive learning pathways...
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <GraduationCap className="w-5 h-5 text-brand-red" aria-hidden="true" />
+          <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+            Children&apos;s Enrolled Programmes &amp; Learning Progress
+          </h3>
+        </div>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Expand any programme folder to inspect nested modules, current focus, and verified prior-learning credits.
+        </p>
+      </div>
+
+      {feedbackMsg && (
+        <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold flex items-center justify-between">
+          <span>{feedbackMsg}</span>
+          <button onClick={() => setFeedbackMsg(null)} className="font-bold underline cursor-pointer">
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      <div className="space-y-6">
+        {students.map((student) => {
+          const summary = calculateStudentPathwayProgress({
+            studentRecord: student,
+            programsMap,
+            progressRecords: progressByStudent[student.id] || [],
+            priorLearningRecords: priorByStudent[student.id] || [],
+          });
+
+          return (
+            <div
+              key={student.id}
+              className="border-t border-slate-200 dark:border-slate-800 pt-5 space-y-4"
+            >
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <h4 className="font-bold text-base text-slate-900 dark:text-white">
+                      {student.fullName || student.studentName || student.name}
+                    </h4>
+                    <span className="text-xs font-semibold text-brand-red tabular-nums">
+                      Overall Pathway: {summary.overallProgress}% Complete
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5 tabular-nums">
+                    {summary.completedRequiredUnits} of {summary.totalRequiredUnits} required learning units completed
+                    {summary.priorLearningApprovedUnits > 0
+                      ? ` (${summary.priorLearningApprovedUnits} via verified Prior-Learning Recognition)`
+                      : ''}
+                  </p>
+                </div>
+
+                {summary.currentUnits.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="font-semibold text-slate-500 dark:text-slate-400">
+                      Current Focus:
+                    </span>
+                    <span className="font-bold text-slate-900 dark:text-white tabular-nums">
+                      {summary.currentUnits
+                        .slice(0, 2)
+                        .map((u) => `${u.program.title} (${u.selfProgress}%)`)
+                        .join(' · ')}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {summary.rootBranches.length === 0 ? (
+                <div className="p-5 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 text-center space-y-1">
+                  <AlertCircle className="w-5 h-5 text-brand-red mx-auto" aria-hidden="true" />
+                  <div className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                    Pending Programme Pathway Confirmation
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Your child&apos;s specific programme branch is currently awaiting confirmation by the academic team.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {summary.rootBranches.map((rootNode) => renderChildBranch(student, rootNode))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Modal: Parent Request Prior-Learning Recognition */}
+      {requestModalTarget && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <form
+            onSubmit={handleSubmitParentPriorRequest}
+            className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 max-w-lg w-full p-6 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Award size={18} className="text-brand-red" />
+                  <span>Request Prior-Learning Recognition</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Child:{' '}
+                  <strong>
+                    {requestModalTarget.student.fullName ||
+                      requestModalTarget.student.studentName ||
+                      requestModalTarget.student.name}
+                  </strong>{' '}
+                  · Unit: <strong>{requestModalTarget.node.breadcrumbPath}</strong>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRequestModalTarget(null)}
+                className="p-1 text-slate-400 hover:text-slate-700"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Basis for Prior-Learning Recognition
+              </label>
+              <select
+                value={reqType}
+                onChange={(e) => setReqType(e.target.value as PriorLearningRecognitionType)}
+                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 dark:text-white"
+              >
+                <option value="PRIOR_COMPLETION">Completed Previously</option>
+                <option value="PORTFOLIO_VERIFIED">Has Built Practical Project / Portfolio</option>
+                <option value="ASSESSMENT_PASSED">Ready for Diagnostic Assessment</option>
+                <option value="CREDIT_TRANSFER">Completed at Previous Academy / School</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Certificate / Project Link or Evidence Reference *
+              </label>
+              <input
+                type="text"
+                required
+                value={reqEvidence}
+                onChange={(e) => setReqEvidence(e.target.value)}
+                placeholder="e.g. Link to previous project, certificate, or school report"
+                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-xl text-xs dark:bg-slate-800 dark:text-white"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Notes for Tutor / Administrator *
+              </label>
+              <textarea
+                rows={2}
+                required
+                value={reqNotes}
+                onChange={(e) => setReqNotes(e.target.value)}
+                placeholder="Briefly describe what your child has already covered in this topic..."
+                className="w-full p-2.5 border border-slate-300 dark:border-slate-700 rounded-xl text-xs dark:bg-slate-800 dark:text-white"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setRequestModalTarget(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={submittingReq}
+                className="inline-flex items-center gap-1.5 px-5 py-2 rounded-lg bg-brand-red text-white text-xs font-bold hover:bg-red-800 disabled:opacity-50 cursor-pointer"
+              >
+                <Send size={13} />
+                <span>{submittingReq ? 'Submitting...' : 'Submit Request for Verification'}</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ParentLearningTracks;

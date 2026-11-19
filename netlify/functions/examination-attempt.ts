@@ -1,0 +1,689 @@
+import type { Handler } from "@netlify/functions";
+import {
+  adminAuth,
+  adminDb,
+  applyRequestDatabaseHeader,
+  getDefaultAdminDb,
+  getLegacyNamedAdminDb,
+} from "../../api/_lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
+
+function getAllAdminDbs() {
+  const dbs = [getDefaultAdminDb(), getLegacyNamedAdminDb()].filter(Boolean);
+  return dbs.length ? dbs : [adminDb];
+}
+import {
+  answersForFinalization,
+  gradeAnswers,
+  isAssessmentStudentRole,
+  computeExamMaxScore,
+  calculateScorePercentage,
+  resolvePartnerSchoolName,
+  resolveAttemptQuestions,
+  normalizeClassName,
+  isAttemptResultReleased,
+  shouldAutoReleaseAttemptResult,
+} from "../../api/_lib/jdi-assessment.js";
+
+const json = (statusCode: number, body: Record<string, unknown>) => ({
+  statusCode,
+  headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+  body: JSON.stringify(body),
+});
+
+async function user(event: any) {
+  const h = event.headers?.authorization || event.headers?.Authorization || "";
+  if (!h.startsWith("Bearer ")) throw new Error("AUTH");
+  const token = await adminAuth.verifyIdToken(h.slice(7));
+  const p = await adminDb.collection("users").doc(token.uid).get();
+  if (!p.exists) throw new Error("PROFILE");
+  const data = p.data() || {};
+  if (["DISABLED", "SUSPENDED", "BANNED"].includes(String(data.accountStatus || data.status || "").toUpperCase())) {
+    throw new Error("INACTIVE");
+  }
+  return { uid: token.uid, role: String(data.role || "").toUpperCase(), data };
+}
+
+async function studentFor(uid: string, userData?: Record<string, any>) {
+  const studentDocId = String(userData?.studentDocId || "").trim();
+  if (studentDocId) {
+    for (const name of ["individualStudents", "students"]) {
+      const snap = await adminDb.collection(name).doc(studentDocId).get();
+      if (snap.exists) return { id: snap.id, data: snap.data() || {} };
+    }
+  }
+  for (const name of ["individualStudents", "students"]) {
+    const direct = await adminDb.collection(name).doc(uid).get();
+    if (direct.exists) return { id: direct.id, data: direct.data() || {} };
+  }
+  for (const name of ["individualStudents", "students"]) {
+    for (const field of ["firebaseUid", "userId"]) {
+      const q = await adminDb.collection(name).where(field, "==", uid).limit(1).get();
+      if (!q.empty) return { id: q.docs[0].id, data: q.docs[0].data() };
+    }
+  }
+  if (userData && isAssessmentStudentRole(userData.role)) {
+    return { id: studentDocId || uid, data: userData };
+  }
+  return null;
+}
+
+function safeQuestion(q: any) {
+  const { correctOptionIds, acceptedAnswers, answer, explanation, ...rest } = q;
+  return rest;
+}
+
+async function resolveSchoolName(schoolId: string, ...fallbacks: unknown[]): Promise<string> {
+  if (schoolId) {
+    try {
+      const snap = await adminDb.collection("schools").doc(schoolId).get();
+      if (snap.exists) {
+        const sd = snap.data() || {};
+        return resolvePartnerSchoolName(sd.name, sd.schoolName, sd.institutionName, ...fallbacks);
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return resolvePartnerSchoolName(...fallbacks);
+}
+
+async function notifyStaff(a: any, exam: any, attemptId: string) {
+  const recipients = new Set<string>();
+  if (exam.createdBy) recipients.add(String(exam.createdBy));
+  const schoolId = String(a.schoolId || exam.schoolId || "");
+  if (schoolId) {
+    const users = await adminDb
+      .collection("users")
+      .where("schoolId", "==", schoolId)
+      .limit(100)
+      .get()
+      .catch(() => null);
+    if (users) {
+      users.docs.forEach(d => {
+        const role = String(d.data().role || "").toUpperCase();
+        if (["SCHOOL", "SCHOOL_ADMIN"].includes(role)) recipients.add(d.id);
+      });
+    }
+  } else {
+    let student = await adminDb.collection("individualStudents").doc(String(a.studentId || "")).get();
+    if (!student.exists) {
+      student = await adminDb.collection("students").doc(String(a.studentId || "")).get();
+    }
+    const parentId = String(student.data()?.parentId || student.data()?.guardianId || "");
+    if (parentId) recipients.add(parentId);
+  }
+  recipients.delete(String(a.studentUid || ""));
+  const batch = adminDb.batch();
+  recipients.forEach(uid => {
+    const ref = adminDb.collection("jdiNotifications").doc();
+    batch.set(ref, {
+      recipientUid: uid,
+      isRead: false,
+      type: "exam_submitted",
+      title: "Assessment attempt submitted",
+      message: String(exam.title || "An assessment") + " was submitted or timed out.",
+      examId: a.examId,
+      attemptId,
+      schoolId: schoolId || null,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+  });
+  if (recipients.size) await batch.commit();
+}
+
+export const handler: Handler = async event => {
+  try {
+    applyRequestDatabaseHeader(event.headers as any);
+    const c = await user(event);
+    if (!isAssessmentStudentRole(c.role)) return json(403, { error: "Student access required." });
+    const path = String(event.path || "");
+    const method = event.httpMethod || "GET";
+
+    if (method === "GET" && path.endsWith("/examination-attempt")) {
+      const student = await studentFor(c.uid, c.data);
+      if (!student) return json(403, { error: "Student record not found." });
+      const id = String(event.queryStringParameters?.attemptId || "");
+      if (!id) return json(400, { error: "Attempt ID required." });
+      const ref = adminDb.collection("jdiExamAttempts").doc(id);
+      let snap = await ref.get();
+      if (!snap.exists) {
+        for (const dbInst of getAllAdminDbs()) {
+          const candidate = await dbInst.collection("jdiExamAttempts").doc(id).get().catch(() => null);
+          if (candidate?.exists) {
+            snap = candidate;
+            break;
+          }
+        }
+      }
+      if (!snap.exists) return json(404, { error: "Attempt not found." });
+      const a = snap.data() || {};
+      if (a.studentUid !== c.uid && a.studentId !== student.id) {
+        return json(403, { error: "Not authorised." });
+      }
+      let examSnap = await adminDb.collection("jdiExams").doc(String(a.examId)).get();
+      if (!examSnap.exists) {
+        for (const dbInst of getAllAdminDbs()) {
+          const jdiCand = await dbInst.collection("jdiExams").doc(String(a.examId)).get().catch(() => null);
+          if (jdiCand?.exists) {
+            examSnap = jdiCand;
+            break;
+          }
+          const schCand = await dbInst.collection("schoolExams").doc(String(a.examId)).get().catch(() => null);
+          if (schCand?.exists) {
+            examSnap = schCand;
+            break;
+          }
+        }
+      }
+      if (!examSnap.exists) return json(404, { error: "Assessment not found." });
+      const exam = examSnap.data() || {};
+
+      const effectiveQuestions = resolveAttemptQuestions(exam, a);
+      const maxScore = computeExamMaxScore(exam, a);
+      const schoolId = String(a.schoolId || exam.schoolId || student.data.schoolId || "");
+      const schoolName = await resolveSchoolName(schoolId, a.schoolName, exam.schoolName, student.data.schoolName);
+      const studentName = String(
+        a.studentName ||
+          student.data.fullName ||
+          student.data.studentName ||
+          student.data.name ||
+          c.data.name ||
+          c.data.fullName ||
+          "Student"
+      );
+      const rawClass = String(
+        a.className ||
+          student.data.class ||
+          student.data.className ||
+          student.data.grade ||
+          student.data.classLevel ||
+          (Array.isArray(exam.classIds) ? exam.classIds[0] : "") ||
+          ""
+      );
+      const className = normalizeClassName(rawClass) || rawClass;
+
+      const hasDeadline = Boolean(a.deadlineAt);
+      const deadline = hasDeadline ? new Date(a.deadlineAt).getTime() : Number.POSITIVE_INFINITY;
+      if (a.status === "in_progress" && hasDeadline && Number.isFinite(deadline) && Date.now() >= deadline) {
+        const expiry = await adminDb.runTransaction(async tx => {
+          const currentSnap = await tx.get(ref);
+          if (!currentSnap.exists) return { kind: "missing" as const };
+          const current = currentSnap.data() || {};
+          if (current.studentUid !== c.uid && current.studentId !== student.id) return { kind: "owner" as const };
+          if (current.status !== "in_progress") return { kind: "closed" as const, current };
+          const currentDeadline = current.deadlineAt ? new Date(current.deadlineAt).getTime() : Number.POSITIVE_INFINITY;
+          if (!current.deadlineAt || (Number.isFinite(currentDeadline) && Date.now() < currentDeadline)) {
+            return { kind: "active" as const, current };
+          }
+          const effectiveExam = { ...exam, questions: effectiveQuestions };
+          const grading = gradeAnswers(effectiveExam, current.answers || {});
+          const autoReleaseNow = shouldAutoReleaseAttemptResult(effectiveExam, grading);
+          tx.update(ref, {
+            status: "expired",
+            ...grading,
+            ...(autoReleaseNow ? { resultReleased: true, releasedAt: FieldValue.serverTimestamp() } : {}),
+            schoolName,
+            studentName,
+            className,
+            deadlineAt: FieldValue.delete(),
+            submittedAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+          return { kind: "expired" as const, current, grading, autoReleaseNow };
+        });
+        if (expiry.kind === "missing") return json(404, { error: "Attempt not found." });
+        if (expiry.kind === "owner") return json(403, { error: "Not authorised." });
+        if (expiry.kind === "expired") {
+          await notifyStaff(expiry.current, exam, id).catch(err =>
+            console.warn("JDI staff notification failed", err)
+          );
+        }
+        if (expiry.kind === "active") {
+          return json(409, { error: "The assessment timer has not expired yet." });
+        }
+        const latest =
+          expiry.kind === "closed"
+            ? expiry.current
+            : {
+                ...expiry.current,
+                status: "expired",
+                ...expiry.grading,
+                ...(expiry.autoReleaseNow ? { resultReleased: true, releasedAt: new Date().toISOString() } : {}),
+              };
+        const latestReleased = isAttemptResultReleased(latest, { ...exam, questions: effectiveQuestions });
+        return json(200, {
+          attempt: {
+            id,
+            examId: a.examId,
+            studentId: student.id,
+            studentName,
+            className,
+            schoolId,
+            schoolName,
+            status: String(latest.status || "expired"),
+            deadlineAt: latest.deadlineAt,
+            score: latestReleased ? latest.score : undefined,
+            maxScore,
+            percentage:
+              latestReleased && typeof latest.score === "number"
+                ? calculateScorePercentage(latest.score, maxScore)
+                : undefined,
+            releasedAt: latestReleased ? (latest.releasedAt || latest.updatedAt || new Date().toISOString()) : undefined,
+            resultReleased: latestReleased,
+            questionResults: latestReleased ? latest.questionResults : undefined,
+          },
+          exam: {
+            id: a.examId,
+            title: exam.title,
+            subject: exam.subject,
+            workType: exam.workType,
+            schoolId,
+            schoolName,
+            classIds: exam.classIds || [],
+            hasTimeLimit:
+              exam.hasTimeLimit !== undefined
+                ? Boolean(exam.hasTimeLimit)
+                : exam.durationMinutes != null && Number(exam.durationMinutes) > 0,
+            durationMinutes: exam.durationMinutes,
+            limitOneAttempt:
+              exam.limitOneAttempt !== undefined
+                ? Boolean(exam.limitOneAttempt)
+                : Number(exam.maxAttempts || 1) <= 1,
+            maxAttempts:
+              exam.limitOneAttempt === false
+                ? Math.max(2, Number(exam.maxAttempts || 10))
+                : Number(exam.maxAttempts || 1),
+            gradingMode: exam.gradingMode || "automatic",
+            releaseGradesPolicy: exam.releaseGradesPolicy,
+            maxScore,
+          },
+          questions: latestReleased ? effectiveQuestions : [],
+        });
+      }
+
+      const submitted = ["submitted", "expired", "graded"].includes(String(a.status));
+      const released = isAttemptResultReleased(a, { ...exam, questions: effectiveQuestions });
+      const safeQuestions = effectiveQuestions.map(safeQuestion);
+      const questionById = new Map(safeQuestions.map((q: any) => [String(q.id), q]));
+      const orderedQuestions = Array.isArray(a.questionOrder)
+        ? a.questionOrder.map((qid: string) => questionById.get(String(qid))).filter(Boolean)
+        : safeQuestions;
+      const displayedQuestions = orderedQuestions.map((q: any) => {
+        const order = a.optionOrderMap?.[String(q.id)];
+        if (!Array.isArray(order) || !Array.isArray(q.options)) return q;
+        const byOptionId = new Map(q.options.map((option: any) => [String(option.id), option]));
+        return {
+          ...q,
+          options: [
+            ...order.map((oid: string) => byOptionId.get(String(oid))).filter(Boolean),
+            ...q.options.filter((option: any) => !order.includes(String(option.id))),
+          ],
+        };
+      });
+
+      const resultQuestions = released
+        ? effectiveQuestions.map((q: any) => ({
+            id: q.id,
+            type: q.type,
+            prompt: q.prompt,
+            points: Number(q.points ?? 1),
+            options: Array.isArray(q.options) ? q.options : [],
+            correctOptionIds: Array.isArray(q.correctOptionIds) ? q.correctOptionIds : [],
+            acceptedAnswers: Array.isArray(q.acceptedAnswers) ? q.acceptedAnswers : [],
+            explanation: String(q.explanation || ""),
+          }))
+        : [];
+
+      const releasedAtIso = a.releasedAt?.toDate
+        ? a.releasedAt.toDate().toISOString()
+        : a.releasedAt || (released ? (a.updatedAt?.toDate ? a.updatedAt.toDate().toISOString() : a.updatedAt || new Date().toISOString()) : undefined);
+      const submittedAtIso = a.submittedAt?.toDate ? a.submittedAt.toDate().toISOString() : a.submittedAt || undefined;
+
+      return json(200, {
+        attempt: {
+          id,
+          examId: a.examId,
+          studentId: student.id,
+          studentName,
+          className,
+          schoolId,
+          schoolName,
+          status: a.status,
+          deadlineAt: a.deadlineAt,
+          submittedAt: submittedAtIso,
+          answers: released ? a.answers || {} : submitted ? undefined : a.answers || {},
+          score: released ? a.score : undefined,
+          maxScore,
+          percentage:
+            released && typeof a.score === "number" ? calculateScorePercentage(a.score, maxScore) : undefined,
+          releasedAt: released ? releasedAtIso : undefined,
+          resultReleased: released,
+          feedback: released ? String(a.feedback || "") : undefined,
+          questionResults: released && Array.isArray(a.questionResults) ? a.questionResults : undefined,
+          manualMarks: released && Array.isArray(a.manualMarks) ? a.manualMarks : undefined,
+        },
+        exam: {
+          id: a.examId,
+          title: exam.title,
+          subject: exam.subject,
+          workType: exam.workType,
+          schoolId,
+          schoolName,
+          classIds: exam.classIds || [],
+          instructions: exam.instructions || exam.description || "",
+          deliverables: exam.deliverables || "",
+          learningResources: Array.isArray(exam.learningResources) ? exam.learningResources : [],
+          resourceUrl: exam.resourceUrl || exam.videoUrl || exam.learningVideoUrl || "",
+          videoUrl: exam.videoUrl || exam.learningVideoUrl || "",
+          hasTimeLimit:
+            exam.hasTimeLimit !== undefined
+              ? Boolean(exam.hasTimeLimit)
+              : exam.durationMinutes != null && Number(exam.durationMinutes) > 0,
+          durationMinutes: exam.durationMinutes,
+          limitOneAttempt:
+            exam.limitOneAttempt !== undefined
+              ? Boolean(exam.limitOneAttempt)
+              : Number(exam.maxAttempts || 1) <= 1,
+          maxAttempts:
+            exam.limitOneAttempt === false
+              ? Math.max(2, Number(exam.maxAttempts || 10))
+              : Number(exam.maxAttempts || 1),
+          gradingMode: exam.gradingMode || "automatic",
+          releaseGradesPolicy: exam.releaseGradesPolicy,
+          maxScore,
+        },
+        questions: released ? resultQuestions : submitted ? [] : displayedQuestions,
+      });
+    }
+
+    if (method === "POST" && path.endsWith("/examination-attempt")) {
+      if (String(event.body || "").length > 1000000) {
+        return json(413, { error: "Answer payload is too large. Save shorter answers and try again." });
+      }
+      const body = JSON.parse(event.body || "{}");
+      const id = String(body.attemptId || "");
+      const action = String(body.action || "");
+      if (!id) return json(400, { error: "Attempt ID required." });
+      const ref = adminDb.collection("jdiExamAttempts").doc(id);
+      let snap = await ref.get();
+      if (!snap.exists) {
+        for (const dbInst of getAllAdminDbs()) {
+          const candidate = await dbInst.collection("jdiExamAttempts").doc(id).get().catch(() => null);
+          if (candidate?.exists) {
+            snap = candidate;
+            await ref.set(candidate.data() || {}, { merge: true }).catch(() => undefined);
+            break;
+          }
+        }
+      }
+      if (!snap.exists) return json(404, { error: "Attempt not found." });
+      const a = snap.data() || {};
+
+      // Only resolve the student document when attempt.studentUid does not already match the authenticated user
+      const student = a.studentUid === c.uid ? null : await studentFor(c.uid, c.data);
+      if (a.studentUid !== c.uid && (!student || a.studentId !== student.id)) {
+        return json(403, { error: "Not authorised." });
+      }
+      if (a.status !== "in_progress") {
+        return json(409, { error: "This assessment attempt is no longer editable." });
+      }
+      const hasDeadline = Boolean(a.deadlineAt);
+      const deadline = hasDeadline ? new Date(a.deadlineAt).getTime() : Number.POSITIVE_INFINITY;
+      const isExpired = hasDeadline && Number.isFinite(deadline) && Date.now() >= deadline;
+
+      // Fast-path for ordinary non-expired answer autosaves: avoid fetching the exam document if question IDs are already known on the attempt
+      if (action === "save" && !isExpired) {
+        const answers = body.answers;
+        if (!answers || typeof answers !== "object" || Array.isArray(answers) || Object.keys(answers).length > 200) {
+          return json(400, { error: "Invalid answers." });
+        }
+        let allowedQuestionIds: Set<string> | null = null;
+        if (Array.isArray(a.questionOrder) && a.questionOrder.length > 0) {
+          allowedQuestionIds = new Set(a.questionOrder.map((qid: any) => String(qid)));
+        } else if (Array.isArray(a.questionsSnapshot) && a.questionsSnapshot.length > 0) {
+          allowedQuestionIds = new Set(a.questionsSnapshot.map((q: any) => String(q.id)));
+        } else {
+          const examSnapForSave = await adminDb.collection("jdiExams").doc(String(a.examId)).get();
+          if (!examSnapForSave.exists) return json(404, { error: "Assessment not found." });
+          const examForSave = examSnapForSave.data() || {};
+          const qs = resolveAttemptQuestions(examForSave, a);
+          allowedQuestionIds = new Set(qs.map((q: any) => String(q.id)));
+        }
+
+        if (Object.keys(answers).some(key => !allowedQuestionIds!.has(key))) {
+          return json(400, { error: "Answers contain an unknown question ID." });
+        }
+        const clean: Record<string, string | string[]> = {};
+        for (const [key, value] of Object.entries(answers)) {
+          if (typeof value === "string") clean[key] = value.slice(0, 10000);
+          else if (Array.isArray(value) && value.length <= 20 && value.every(v => typeof v === "string")) {
+            clean[key] = value.map(v => v.slice(0, 500));
+          } else return json(400, { error: "Invalid answer format." });
+        }
+        const saveResult = await adminDb.runTransaction(async tx => {
+          const currentSnap = await tx.get(ref);
+          if (!currentSnap.exists) return "missing";
+          const current = currentSnap.data() || {};
+          if (current.studentUid !== c.uid && (!student || current.studentId !== student.id)) return "owner";
+          if (current.status !== "in_progress") return "closed";
+          const currentHasDeadline = Boolean(current.deadlineAt);
+          const currentDeadline = currentHasDeadline ? new Date(current.deadlineAt).getTime() : Number.POSITIVE_INFINITY;
+          if (currentHasDeadline && Number.isFinite(currentDeadline) && Date.now() >= currentDeadline) return "expired";
+          tx.update(ref, { answers: clean, updatedAt: FieldValue.serverTimestamp() });
+          return "ok";
+        });
+        if (saveResult === "missing") return json(404, { error: "Attempt not found." });
+        if (saveResult === "owner") return json(403, { error: "Not authorised." });
+        if (saveResult === "closed") return json(409, { error: "This assessment attempt is no longer editable." });
+        if (saveResult === "expired") {
+          return json(409, {
+            error: "The assessment time has expired. Submit is no longer available.",
+            status: "expired",
+          });
+        }
+        return json(200, { ok: true });
+      }
+
+      const examSnap = await adminDb.collection("jdiExams").doc(String(a.examId)).get();
+      if (!examSnap.exists) return json(404, { error: "Assessment not found." });
+      const exam = examSnap.data() || {};
+      const effectiveQuestions = resolveAttemptQuestions(exam, a);
+
+      if (isExpired) {
+        const expiry = await adminDb.runTransaction(async tx => {
+          const currentSnap = await tx.get(ref);
+          if (!currentSnap.exists) return { kind: "missing" as const };
+          const current = currentSnap.data() || {};
+          if (current.studentUid !== c.uid && (!student || current.studentId !== student.id)) {
+            return { kind: "owner" as const };
+          }
+          if (current.status !== "in_progress") {
+            return { kind: "closed" as const, status: String(current.status || "closed") };
+          }
+          const currentDeadline = current.deadlineAt ? new Date(current.deadlineAt).getTime() : Number.POSITIVE_INFINITY;
+          if (!current.deadlineAt || (Number.isFinite(currentDeadline) && Date.now() < currentDeadline)) return { kind: "active" as const };
+          const effectiveExam = { ...exam, questions: effectiveQuestions };
+          const grading = gradeAnswers(effectiveExam, current.answers || {});
+          const autoReleaseNow = shouldAutoReleaseAttemptResult(effectiveExam, grading);
+          tx.update(ref, {
+            status: "expired",
+            ...grading,
+            ...(autoReleaseNow ? { resultReleased: true, releasedAt: FieldValue.serverTimestamp() } : {}),
+            deadlineAt: FieldValue.delete(),
+            submittedAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+          return { kind: "expired" as const, grading, attempt: current, autoReleaseNow };
+        });
+        if (expiry.kind === "missing") return json(404, { error: "Attempt not found." });
+        if (expiry.kind === "owner") return json(403, { error: "Not authorised." });
+        if (expiry.kind === "active") return json(409, { error: "The assessment timer has not expired yet." });
+        if (expiry.kind === "expired") {
+          await notifyStaff(expiry.attempt, exam, id).catch(err =>
+            console.warn("JDI staff notification failed", err)
+          );
+        }
+        return json(409, {
+          error:
+            expiry.kind === "closed"
+              ? "This assessment attempt is already closed."
+              : "Time has expired. Your attempt has been closed.",
+          status: expiry.kind === "expired" ? "expired" : expiry.status,
+          autoGraded: expiry.kind === "expired" ? expiry.grading.autoGraded : undefined,
+        });
+      }
+
+      if (action === "expire" && (!hasDeadline || Date.now() < deadline)) {
+        return json(403, { error: "The assessment timer has not expired yet." });
+      }
+
+      if (action === "submit" || action === "expire") {
+        const requestedAnswers =
+          body.answers && typeof body.answers === "object" && !Array.isArray(body.answers) ? body.answers : null;
+        if (requestedAnswers) {
+          const allowedQuestionIds = new Set(effectiveQuestions.map((q: any) => String(q.id)));
+          if (
+            Object.keys(requestedAnswers).length > 200 ||
+            Object.keys(requestedAnswers).some(key => !allowedQuestionIds.has(key)) ||
+            Object.values(requestedAnswers).some((v: any) =>
+              typeof v === "string"
+                ? v.length > 10000
+                : !(Array.isArray(v) && v.length <= 20 && v.every((item: any) => typeof item === "string" && item.length <= 500))
+            ) ||
+            Object.values(requestedAnswers).some((v: any) => typeof v !== "string" && !Array.isArray(v))
+          ) {
+            return json(400, {
+              error: "Invalid answers payload. Text answers are limited to 10,000 characters and selected options to 20 entries.",
+            });
+          }
+        }
+        const effectiveExam = { ...exam, questions: effectiveQuestions };
+        const submission = await adminDb.runTransaction(async tx => {
+          const currentSnap = await tx.get(ref);
+          if (!currentSnap.exists) return { kind: "missing" as const };
+          const current = currentSnap.data() || {};
+          if (current.studentUid !== c.uid && (!student || current.studentId !== student.id)) {
+            return { kind: "owner" as const };
+          }
+          if (current.status !== "in_progress") {
+            return { kind: "closed" as const, status: String(current.status || "closed") };
+          }
+          const currentHasDeadline = Boolean(current.deadlineAt);
+          const currentDeadline = currentHasDeadline ? new Date(current.deadlineAt).getTime() : Number.POSITIVE_INFINITY;
+          const deadlinePassed = currentHasDeadline && Number.isFinite(currentDeadline) && Date.now() >= currentDeadline;
+          const finalAnswers = answersForFinalization(current.answers, requestedAnswers, deadlinePassed);
+          if (deadlinePassed) {
+            const grading = gradeAnswers(effectiveExam, finalAnswers);
+            const autoReleaseNow = shouldAutoReleaseAttemptResult(effectiveExam, grading);
+            tx.update(ref, {
+              answers: finalAnswers,
+              status: "expired",
+              ...grading,
+              ...(autoReleaseNow ? { resultReleased: true, releasedAt: FieldValue.serverTimestamp() } : {}),
+              deadlineAt: FieldValue.delete(),
+              submittedAt: FieldValue.serverTimestamp(),
+              updatedAt: FieldValue.serverTimestamp(),
+            });
+            return { kind: "expired" as const, grading, attempt: current, autoReleaseNow };
+          }
+          if (action === "expire") return { kind: "active" as const };
+          const grading = gradeAnswers(effectiveExam, finalAnswers);
+          const autoReleaseNow = shouldAutoReleaseAttemptResult(effectiveExam, grading);
+          const finalStatus = autoReleaseNow ? "graded" : "submitted";
+          tx.update(ref, {
+            answers: finalAnswers,
+            ...grading,
+            status: finalStatus,
+            ...(autoReleaseNow ? { resultReleased: true, releasedAt: FieldValue.serverTimestamp() } : {}),
+            deadlineAt: FieldValue.delete(),
+            submittedAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+          return { kind: "submitted" as const, status: finalStatus, grading, attempt: current, autoReleaseNow };
+        });
+        if (submission.kind === "missing") return json(404, { error: "Attempt not found." });
+        if (submission.kind === "owner") return json(403, { error: "Not authorised." });
+        if (submission.kind === "closed") {
+          return json(409, { error: "This assessment attempt is already closed.", status: submission.status });
+        }
+        if (submission.kind === "active") {
+          return json(403, { error: "The assessment timer has not expired yet." });
+        }
+        if (submission.kind === "expired") {
+          const latestSnap = await ref.get().catch(() => null);
+          if (latestSnap?.exists) {
+            await Promise.all(
+              getAllAdminDbs().map(dbInst =>
+                dbInst
+                  .collection("jdiExamAttempts")
+                  .doc(id)
+                  .set(latestSnap.data() || {}, { merge: true })
+                  .catch(() => undefined)
+              )
+            );
+          }
+          await notifyStaff(submission.attempt, exam, id).catch(err =>
+            console.warn("JDI staff notification failed", err)
+          );
+          return json(200, {
+            ok: true,
+            status: "expired",
+            autoGraded: submission.grading.autoGraded,
+            resultReleased: submission.autoReleaseNow,
+            score: submission.autoReleaseNow ? submission.grading.score : undefined,
+            maxScore: submission.grading.maxScore,
+            percentage: submission.autoReleaseNow ? submission.grading.percentage : undefined,
+            questionResults: submission.autoReleaseNow ? submission.grading.questionResults : undefined,
+            questions: submission.autoReleaseNow ? effectiveQuestions : undefined,
+          });
+        }
+        const latestSnap = await ref.get().catch(() => null);
+        if (latestSnap?.exists) {
+          await Promise.all(
+            getAllAdminDbs().map(dbInst =>
+              dbInst
+                .collection("jdiExamAttempts")
+                .doc(id)
+                .set(latestSnap.data() || {}, { merge: true })
+                .catch(() => undefined)
+            )
+          );
+        }
+        const examRef = adminDb.collection("jdiExams").doc(String(a.examId));
+        await examRef.collection("events").add({
+          type: "attempt_submitted",
+          attemptId: id,
+          studentId: a.studentId,
+          schoolId: a.schoolId,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+        await notifyStaff(submission.attempt, exam, id).catch(err =>
+          console.warn("JDI staff notification failed", err)
+        );
+        const released = Boolean(submission.autoReleaseNow) || isAttemptResultReleased(submission.attempt, effectiveExam);
+        return json(200, {
+          ok: true,
+          status: submission.status,
+          autoGraded: submission.grading.autoGraded,
+          score: released ? submission.grading.score : undefined,
+          maxScore: submission.grading.maxScore,
+          percentage: released ? submission.grading.percentage : undefined,
+          questionResults: released ? submission.grading.questionResults : undefined,
+          questions: released ? effectiveQuestions : undefined,
+          releasedAt: released ? new Date().toISOString() : undefined,
+          resultReleased: released,
+        });
+      }
+      return json(400, { error: "Unknown action." });
+    }
+    return json(404, { error: "Assessment attempt endpoint not found." });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (msg === "AUTH") return json(401, { error: "Authentication required." });
+    if (msg === "PROFILE") return json(403, { error: "Portal profile not found." });
+    if (msg === "INACTIVE") return json(403, { error: "Account is inactive." });
+    console.error("JDI attempt handler failed", e);
+    return json(500, { error: "Unable to process this assessment attempt." });
+  }
+};

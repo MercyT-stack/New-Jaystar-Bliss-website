@@ -1,0 +1,532 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Activity, AlertCircle, BookOpenCheck, CalendarCheck, ClipboardList, Download, FileBarChart2, GraduationCap, Loader2, RefreshCw, Search, ShieldCheck, UserRound, Users } from 'lucide-react';
+import { collection, doc, getDoc, getDocs, limit, query, where } from 'firebase/firestore';
+import { generateLearnerInsightsPdf } from '../../lib/pdf/learnerInsightsPdfGenerator';
+import { auth, db, getClientDatabases } from '../../lib/firebase';
+import { getEffectiveAuth } from '../../utils/impersonation';
+import { computeExamMaxScore, formatScoreSummary, isAttemptResultReleased, normalizeClassName, normalizeWorkType, resolvePartnerSchoolName } from '../../lib/classes';
+import { fetchAssignmentsForLearner, type LinkedLearnerProfile } from '../../lib/academicSyncEngine';
+import SEO from '../../components/ui/SEO';
+
+import { MetricGridSkeleton, RosterListSkeleton, DocumentReaderSkeleton } from '../../components/ui/Skeleton';
+import { getFriendlyErrorMessage, logInternalDiagnostic } from '../../utils/friendlyErrors';
+import { ReleasedOfficialReportsSection } from '../../components/academic-reporting/ReleasedOfficialReportsSection';
+
+type Learner = { id: string; fullName: string; username: string; email?: string; className: string; track?: string; accountStatus?: string; studentUid?: string };
+type Assessment = { id: string; title: string; subject: string; assessmentType: string; score: number | null; feedback?: string; createdAt?: string | null; updatedAt?: string | null };
+type AssignmentItem = { id: string; title: string; subject: string; status: string; grade: number | null; maxPoints: number; dueDate?: string | null; submittedAt?: string | null; feedback?: string };
+type ExamResult = { id: string; title: string; subject: string; workType?: string; isUngradedActivity?: boolean; status: string; score: number | null; maxScore: number; submittedAt?: string | null; releasedAt?: string | null; feedback?: string };
+type Attendance = { id: string; date?: string | null; status: string; notes?: string; className?: string };
+type ActivityRecord = { id: string; type: string; action: string; message: string; route?: string; createdAt?: string | null; actorRole?: string };
+type Detail = {
+  learner: Learner;
+  assessments: Assessment[];
+  assignments?: AssignmentItem[];
+  examinations: ExamResult[];
+  attendance: Attendance[];
+  activities: ActivityRecord[];
+  summary: {
+    assessments: number;
+    assignments?: number;
+    examinations: number;
+    attendanceRecords: number;
+    activities: number;
+    averageAssessmentScore: number | null;
+    attendanceRate: number | null;
+  };
+};
+
+const asIso = (v: any) => v?.toDate ? v.toDate().toISOString() : v instanceof Date ? v.toISOString() : typeof v === 'string' ? v : null;
+
+const clientFallbackApi = async (studentId?: string) => {
+  const effective = getEffectiveAuth();
+  const uid = effective.effectiveUid || auth.currentUser?.uid || '';
+  if (!uid) throw new Error('Please sign in again.');
+
+  const dbs = getClientDatabases();
+  const validSchoolIds = new Set<string>();
+  let schoolName = resolvePartnerSchoolName(sessionStorage.getItem('schoolName'));
+  let schoolCode = '';
+  let primarySchoolId = sessionStorage.getItem('schoolId') || '';
+
+  if (primarySchoolId) validSchoolIds.add(primarySchoolId);
+
+  for (const clientDb of dbs) {
+    const uSnap = await getDoc(doc(clientDb, 'users', uid)).catch(() => null);
+    let userEmailFromDoc = '';
+    if (uSnap?.exists()) {
+      const u = uSnap.data() || {};
+      userEmailFromDoc = String(u.email || '').toLowerCase().trim();
+      if (u.schoolId) { validSchoolIds.add(String(u.schoolId).trim()); if (!primarySchoolId) primarySchoolId = String(u.schoolId).trim(); }
+      if (u.school_id) validSchoolIds.add(String(u.school_id).trim());
+      if (u.schoolDocId) validSchoolIds.add(String(u.schoolDocId).trim());
+      if (u.schoolName && !schoolName) schoolName = resolvePartnerSchoolName(u.schoolName);
+      if (u.schoolCode && !schoolCode) schoolCode = String(u.schoolCode);
+    }
+
+    const email = (auth.currentUser?.email || userEmailFromDoc || '').toLowerCase().trim();
+    const emailPrefix = email.includes('@') ? email.split('@')[0].replace(/[^a-z0-9_-]/gi, '') : '';
+    const candidateDocIds = Array.from(new Set([uid, primarySchoolId, emailPrefix, ...Array.from(validSchoolIds)].filter(Boolean)));
+    for (const cid of candidateDocIds) {
+      const sDoc = await getDoc(doc(clientDb, 'schools', cid)).catch(() => null);
+      if (sDoc?.exists()) {
+        const s = sDoc.data() || {};
+        validSchoolIds.add(sDoc.id);
+        if (!primarySchoolId || primarySchoolId === uid) primarySchoolId = sDoc.id;
+        if ((s.name || s.schoolName) && !schoolName) schoolName = resolvePartnerSchoolName(s.name, s.schoolName);
+        if (s.schoolCode) { validSchoolIds.add(String(s.schoolCode).trim()); if (!schoolCode) schoolCode = String(s.schoolCode).trim(); }
+        if (s.schoolId) validSchoolIds.add(String(s.schoolId).trim());
+      }
+    }
+    if (email) {
+      for (const f of ['email', 'contactEmail']) {
+        const qSnap = await getDocs(query(collection(clientDb, 'schools'), where(f, '==', email), limit(5))).catch(() => null);
+        qSnap?.docs.forEach(d => {
+          const s = d.data() || {};
+          validSchoolIds.add(d.id);
+          if (!primarySchoolId || primarySchoolId === uid) primarySchoolId = d.id;
+          if ((s.name || s.schoolName) && !schoolName) schoolName = resolvePartnerSchoolName(s.name, s.schoolName);
+          if (s.schoolCode) { validSchoolIds.add(String(s.schoolCode).trim()); if (!schoolCode) schoolCode = String(s.schoolCode).trim(); }
+          if (s.schoolId) validSchoolIds.add(String(s.schoolId).trim());
+        });
+      }
+    }
+  }
+
+  validSchoolIds.add(uid);
+  const schoolAliases = Array.from(validSchoolIds).filter(Boolean);
+  const resolvedSchoolId = primarySchoolId || schoolAliases[0] || uid;
+
+  const rosterMap = new Map<string, Learner>();
+  const serialise = (id: string, d: any): Learner => {
+    const rawClass = String(d.className || d.class || d.grade || d.classLevel || d.classId || '').trim();
+    return {
+      id,
+      fullName: String(d.fullName || d.studentName || d.name || [d.firstName, d.lastName].filter(Boolean).join(' ') || 'Learner').trim(),
+      username: String(d.username || d.admissionNumber || id).trim(),
+      email: d.email ? String(d.email).trim() : undefined,
+      className: normalizeClassName(rawClass) || rawClass || 'Unassigned',
+      track: String(d.track || d.programName || d.plan || '').trim(),
+      accountStatus: String(d.accountStatus || d.status || 'ACTIVE').trim(),
+      studentUid: String(d.firebaseUid || d.userId || d.uid || '').trim()
+    };
+  };
+
+  for (const clientDb of dbs) {
+    for (const sid of schoolAliases) {
+      for (const collName of ['individualStudents', 'students']) {
+        for (const field of ['schoolId', 'school_id', 'schoolDocId']) {
+          const snap = await getDocs(query(collection(clientDb, collName), where(field, '==', sid), limit(500))).catch(() => null);
+          snap?.docs.forEach(d => {
+            const incoming = serialise(d.id, d.data());
+            const existing = rosterMap.get(d.id);
+            if (existing) {
+              if (existing.fullName === 'Learner' && incoming.fullName !== 'Learner') existing.fullName = incoming.fullName;
+              if (existing.className === 'Unassigned' && incoming.className !== 'Unassigned') existing.className = incoming.className;
+              if (!existing.track && incoming.track) existing.track = incoming.track;
+              if (!existing.studentUid && incoming.studentUid) existing.studentUid = incoming.studentUid;
+            } else {
+              rosterMap.set(d.id, incoming);
+            }
+          });
+        }
+      }
+      for (const field of ['schoolId', 'school_id', 'schoolDocId']) {
+        const uSnap = await getDocs(query(collection(clientDb, 'users'), where(field, '==', sid), limit(500))).catch(() => null);
+        uSnap?.docs.forEach(d => {
+          const data = d.data() || {};
+          const r = String(data.role || '').toUpperCase().trim();
+          const isExplicitStudent = ['STUDENT', 'SCHOLAR', 'CADET', 'INDIVIDUAL_STUDENT'].includes(r);
+          const isOtherRole = ['SCHOOL', 'SCHOOL_ADMIN', 'ADMIN', 'SUPER_ADMIN', 'STAFF', 'TUTOR', 'INSTRUCTOR', 'TEACHER', 'PARENT'].includes(r);
+          if (!isExplicitStudent && (isOtherRole || (!data.studentDocId && !data.isStudent))) return;
+          const id = String(data.studentDocId || d.id).trim();
+          const incoming = serialise(id, { ...data, firebaseUid: d.id });
+          const existing = rosterMap.get(id);
+          if (existing) {
+            if (!existing.studentUid) existing.studentUid = d.id;
+            if (existing.fullName === 'Learner' && incoming.fullName !== 'Learner') existing.fullName = incoming.fullName;
+            if (existing.className === 'Unassigned' && incoming.className !== 'Unassigned') existing.className = incoming.className;
+          } else {
+            rosterMap.set(id, incoming);
+          }
+        });
+      }
+    }
+  }
+
+  const roster = Array.from(rosterMap.values()).sort((a, b) => a.fullName.localeCompare(b.fullName));
+  const schoolObj = { id: resolvedSchoolId, schoolId: resolvedSchoolId, schoolCode: schoolCode || resolvedSchoolId, name: schoolName || 'School' };
+
+  if (!studentId) {
+    return {
+      school: schoolObj,
+      learners: roster,
+      totals: { learners: roster.length, classes: new Set(roster.map(s => s.className).filter(v => v && v !== 'Unassigned')).size }
+    };
+  }
+
+  const learner = rosterMap.get(studentId) || roster[0];
+  if (!learner) throw new Error('That learner does not belong to your school.');
+
+  const learnerSyncProfile: LinkedLearnerProfile = {
+    id: learner.id,
+    studentUid: learner.studentUid || '',
+    allIds: Array.from(new Set([learner.id, learner.studentUid].filter(Boolean) as string[])),
+    fullName: learner.fullName,
+    username: learner.username,
+    email: learner.email,
+    className: learner.className,
+    schoolId: resolvedSchoolId,
+    schoolAliases,
+    schoolName: schoolName || 'School',
+    programName: learner.track || '',
+    isSchoolStudent: true,
+    source: 'students',
+  };
+
+  const [assessmentSnap, unifiedAssignments, attendanceSnap, examAttempts] = await Promise.all([
+    getDocs(query(collection(db, 'academic_assessments'), where('studentId', '==', studentId), limit(200))).catch(() => null),
+    fetchAssignmentsForLearner(learnerSyncProfile).catch(() => []),
+    getDocs(query(collection(db, 'attendance'), where('studentId', '==', studentId), limit(300))).catch(() => null),
+    getDocs(query(collection(db, 'jdiExamAttempts'), where('studentId', '==', studentId), limit(300))).catch(() => null),
+  ]);
+
+  const assessments: Assessment[] = (assessmentSnap?.docs || []).map(d => {
+    const a = d.data() || {};
+    return { id: d.id, title: String(a.title || 'Assessment'), subject: String(a.subject || 'General'), assessmentType: String(a.assessmentType || 'OTHER'), score: typeof a.score === 'number' ? a.score : null, feedback: String(a.feedback || ''), createdAt: asIso(a.createdAt), updatedAt: asIso(a.updatedAt) };
+  }).sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
+
+  const assignments: AssignmentItem[] = unifiedAssignments.map(a => ({
+    id: a.id,
+    title: a.title || 'Assignment',
+    subject: a.subject || a.programName || 'General',
+    status: a.status,
+    grade: typeof a.grade === 'number' ? a.grade : null,
+    maxPoints: a.maxMarks || 100,
+    dueDate: a.dueDate || null,
+    submittedAt: a.submittedAt || null,
+    feedback: a.feedback || ''
+  }));
+
+  const attendance: Attendance[] = (attendanceSnap?.docs || []).map(d => {
+    const a = d.data() || {};
+    return { id: d.id, date: asIso(a.date || a.createdAt), status: String(a.status || 'UNKNOWN'), notes: String(a.notes || ''), className: String(a.className || a.class || learner.className) };
+  }).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+
+  const examDocCache = new Map<string, any>();
+  for (const d of examAttempts?.docs || []) {
+    const eid = String(d.data()?.examId || '').trim();
+    if (eid && !examDocCache.has(eid)) {
+      const eSnap = await getDoc(doc(db, 'jdiExams', eid)).catch(() => null);
+      if (eSnap?.exists()) examDocCache.set(eid, eSnap.data() || {});
+    }
+  }
+
+  const examinations: ExamResult[] = (examAttempts?.docs || []).map(d => {
+    const a = d.data() || {};
+    const examData = examDocCache.get(String(a.examId || '')) || {};
+    const released = isAttemptResultReleased(a);
+    return {
+      id: d.id,
+      title: String(examData.title || a.examTitle || a.title || 'Assessment'),
+      subject: String(examData.subject || a.subject || 'General'),
+      workType: normalizeWorkType(examData.workType || a.workType),
+      isUngradedActivity: Boolean(examData.isUngradedActivity || a.isUngradedActivity),
+      status: String(a.status || 'submitted'),
+      score: released && typeof a.score === 'number' ? a.score : null,
+      maxScore: computeExamMaxScore(examData, a),
+      submittedAt: asIso(a.submittedAt),
+      releasedAt: released ? asIso(a.releasedAt) : null,
+      feedback: released ? String(a.feedback || '') : ''
+    };
+  }).sort((a, b) => String(b.submittedAt || '').localeCompare(String(a.submittedAt || '')));
+
+  const activities: ActivityRecord[] = [];
+  return {
+    school: schoolObj,
+    learner,
+    assessments,
+    assignments,
+    examinations,
+    attendance,
+    activities,
+    summary: {
+      assessments: assessments.length,
+      assignments: assignments.length,
+      examinations: examinations.length,
+      attendanceRecords: attendance.length,
+      activities: activities.length,
+      averageAssessmentScore: assessments.filter(a => typeof a.score === 'number').length
+        ? assessments.filter(a => typeof a.score === 'number').reduce((sum, a) => sum + Number(a.score), 0) / assessments.filter(a => typeof a.score === 'number').length
+        : null,
+      attendanceRate: attendance.length ? attendance.filter(a => ['PRESENT', 'LATE'].includes(a.status.toUpperCase())).length / attendance.length * 100 : null
+    }
+  };
+};
+
+const api = async (studentId?: string) => {
+  if (!auth.currentUser) throw new Error('Please sign in again.');
+  try {
+    const token = await auth.currentUser.getIdToken();
+    const q = studentId ? '?studentId=' + encodeURIComponent(studentId) : '';
+    const response = await fetch('/.netlify/functions/school-learner-insights' + q, { headers: { Authorization: 'Bearer ' + token } });
+    const contentType = response.headers.get('content-type') || '';
+    if (response.ok && contentType.includes('application/json')) {
+      const data = await response.json();
+      if (data && (Array.isArray(data.learners) || data.learner)) return data;
+    }
+  } catch {
+    // Fallback to client-side Firestore below
+  }
+  return clientFallbackApi(studentId);
+};
+const dateLabel = (value?: string | null) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+};
+const scoreLabel = (score: number | null | undefined, max?: number, isUngraded?: boolean) =>
+  isUngraded
+    ? 'Practice (Ungraded)'
+    : typeof score === 'number'
+      ? typeof max === 'number' && max > 0
+        ? formatScoreSummary(score, max).summaryLabel
+        : `${score}`
+      : 'Pending';
+
+const SchoolLearnerInsights: React.FC = () => {
+  const [learners, setLearners] = useState<Learner[]>([]);
+  const [school, setSchool] = useState<{ name: string; schoolId: string; schoolCode: string } | null>(null);
+  const [selectedId, setSelectedId] = useState('');
+  const [selectedClass, setSelectedClass] = useState('all');
+  const [search, setSearch] = useState('');
+  const [detail, setDetail] = useState<Detail | null>(null);
+  const [tab, setTab] = useState<'overview' | 'assignments' | 'activities' | 'tests' | 'examinations' | 'attendance'>('overview');
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+
+  const loadRoster = useCallback(async (silent = false) => {
+    if (silent) setRefreshing(true); else setLoading(true);
+    setError('');
+    try {
+      const data = await api();
+      const rows = Array.isArray(data.learners) ? data.learners as Learner[] : [];
+      setLearners(rows);
+      setSchool(data.school || null);
+      setSelectedId(current => rows.some(s => s.id === current) ? current : (rows[0]?.id || ''));
+    } catch (e) {
+      logInternalDiagnostic('SchoolLearnerInsights::loadRoster', e);
+      setError(getFriendlyErrorMessage(e, 'Unable to load school learners right now. Please refresh the page.'));
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadRoster(); }, [loadRoster]);
+
+  const classes = useMemo(() => Array.from(new Set(learners.map(s => s.className).filter(Boolean))).sort((a, b) => a.localeCompare(b)), [learners]);
+  const filteredLearners = useMemo(() => learners.filter(s => (selectedClass === 'all' || s.className === selectedClass) && (s.fullName + ' ' + s.username + ' ' + s.className).toLowerCase().includes(search.toLowerCase().trim())), [learners, selectedClass, search]);
+  useEffect(() => {
+    if (!filteredLearners.length) { setSelectedId(''); setDetail(null); return; }
+    if (!filteredLearners.some(s => s.id === selectedId)) setSelectedId(filteredLearners[0].id);
+  }, [filteredLearners, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId) { setDetail(null); return; }
+    let cancelled = false;
+    setDetail(null);
+    setDetailLoading(true);
+    api(selectedId).then(data => { if (!cancelled) setDetail(data as Detail); })
+      .catch(e => {
+        if (!cancelled) {
+          setDetail(null);
+          logInternalDiagnostic('SchoolLearnerInsights::loadDetail', e, { studentId: selectedId });
+          setError(getFriendlyErrorMessage(e, 'Unable to load this learner record right now.'));
+        }
+      })
+      .finally(() => { if (!cancelled) setDetailLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedId]);
+
+  const categorizedWork = useMemo(() => {
+    if (!detail) return { assignments: [], activities: [], tests: [], examinations: [] };
+    const examItems = detail.examinations || [];
+    const assignmentAttempts = examItems.filter(e => normalizeWorkType(e.workType) === 'ASSIGNMENT');
+    const activityAttempts = examItems.filter(e => normalizeWorkType(e.workType) === 'ACTIVITY');
+    const testAttempts = examItems.filter(e => normalizeWorkType(e.workType) === 'TEST');
+    const formalExams = examItems.filter(e => normalizeWorkType(e.workType) === 'EXAMINATION');
+    return {
+      assignments: [...(detail.assignments || []), ...assignmentAttempts.map(a => ({
+        id: a.id,
+        title: a.title,
+        subject: a.subject,
+        status: a.status,
+        grade: a.score,
+        maxPoints: a.maxScore,
+        dueDate: null,
+        submittedAt: a.submittedAt,
+        feedback: a.feedback
+      }))],
+      activities: activityAttempts,
+      tests: testAttempts,
+      examinations: formalExams
+    };
+  }, [detail]);
+
+  const exportReport = () => {
+    if (!detail || !school) return;
+    void generateLearnerInsightsPdf({
+      school,
+      learner: detail.learner,
+      summary: detail.summary,
+      categorizedWork,
+      assessments: detail.assessments,
+      attendance: detail.attendance,
+    });
+  };
+
+  const tabs = [
+    { id: 'overview', label: 'Overview', icon: FileBarChart2 },
+    { id: 'assignments', label: `Assignments (${categorizedWork.assignments.length})`, icon: ClipboardList },
+    { id: 'activities', label: `Activities (${categorizedWork.activities.length})`, icon: Activity },
+    { id: 'tests', label: `Tests (${categorizedWork.tests.length + (detail?.assessments.length || 0)})`, icon: BookOpenCheck },
+    { id: 'examinations', label: `Assessments (${categorizedWork.examinations.length})`, icon: ShieldCheck },
+    { id: 'attendance', label: `Attendance (${detail?.attendance.length || 0})`, icon: CalendarCheck }
+  ] as const;
+
+  return <div className="space-y-5">
+    <SEO title="Learner Progress | School Portal" description="Review learner assignments, activities, tests, assessment history, attendance and reports." noindex />
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      {school ? (
+        <span className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300">
+          School: <strong className="font-semibold text-slate-900 dark:text-white">{school.name}</strong> · ID: <strong className="font-mono text-slate-900 dark:text-white">{school.schoolId}</strong>
+          {school.schoolCode && school.schoolCode !== school.schoolId ? ` · Code: ${school.schoolCode}` : ''}
+        </span>
+      ) : <div />}
+      <button type="button" onClick={() => void loadRoster(true)} disabled={refreshing} className="rounded-lg bg-[#1E293B] hover:bg-[#14284B] dark:bg-slate-800 dark:hover:bg-slate-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50 inline-flex items-center justify-center gap-2 transition-colors cursor-pointer"><RefreshCw size={14} className={refreshing ? 'animate-spin' : ''}/> Refresh Records</button>
+    </div>
+
+    <ReleasedOfficialReportsSection
+      viewerRole="SCHOOL_ADMIN"
+      schoolId={school?.schoolId || school?.name}
+    />
+
+    {error && <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-[#B91C1C]"><AlertCircle size={18} className="mt-0.5 shrink-0"/><span>{error}</span></div>}
+
+    {loading ? (
+      <MetricGridSkeleton count={3} />
+    ) : (
+      <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 dark:divide-slate-800">
+        <div className="p-4 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Learners in this school</p>
+            <p className="mt-1 text-2xl font-bold text-[#1E293B] dark:text-white tabular-nums">{learners.length}</p>
+          </div>
+          <Users size={18} className="text-[#B91C1C] shrink-0"/>
+        </div>
+        <div className="p-4 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Classes / groups</p>
+            <p className="mt-1 text-2xl font-bold text-[#1E293B] dark:text-white tabular-nums">{classes.length}</p>
+          </div>
+          <GraduationCap size={18} className="text-[#B91C1C] shrink-0"/>
+        </div>
+        <div className="p-4 flex items-center justify-between gap-3 min-w-0">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Learner selected</p>
+            <p className="mt-1 truncate text-base font-bold text-[#1E293B] dark:text-white">{detail?.learner.fullName || (loading ? 'Loading…' : 'None selected')}</p>
+          </div>
+          <UserRound size={18} className="text-[#B91C1C] shrink-0"/>
+        </div>
+      </section>
+    )}
+
+    <section className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-4 sm:p-5">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Filter by class</span><select className="input w-full" value={selectedClass} onChange={e => setSelectedClass(e.target.value)}><option value="all">All classes</option>{classes.map(c => <option key={c} value={c}>{c}</option>)}</select></label>
+        <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-600 dark:text-slate-300">Find a learner</span><span className="relative block"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input className="input w-full pl-9" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name, learner ID or class"/></span></label>
+      </div>
+      {loading ? (
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(240px,0.8fr)_minmax(0,2fr)]">
+          <div className="max-h-[420px] rounded-xl border border-slate-200 dark:border-slate-800 p-2">
+            <RosterListSkeleton count={6} />
+          </div>
+          <div className="min-w-0">
+            <DocumentReaderSkeleton />
+          </div>
+        </div>
+      ) : <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(240px,0.8fr)_minmax(0,2fr)]">
+        <div className="max-h-[420px] divide-y divide-slate-100 dark:divide-slate-800 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800">
+          {filteredLearners.length ? filteredLearners.map(s => <button key={s.id} type="button" onClick={() => { setSelectedId(s.id); setTab('overview'); }} className={'w-full px-3.5 py-3 text-left transition-colors cursor-pointer ' + (selectedId === s.id ? 'bg-red-50/70 dark:bg-red-950/30 border-l-2 border-[#B91C1C]' : 'hover:bg-slate-50 dark:hover:bg-white/5')}><span className="block truncate text-sm font-bold text-[#1E293B] dark:text-white">{s.fullName}</span><span className="mt-0.5 block truncate text-xs text-slate-500">{s.className} · ID {s.id}</span></button>) : <p className="px-3 py-8 text-center text-sm text-slate-500">No learners match these filters.</p>}
+        </div>
+        <div className="min-w-0">
+          {!selectedId ? <div className="rounded-xl bg-slate-50 dark:bg-white/5 p-8 text-center text-sm text-slate-500">Select a learner to view their record.</div> : <>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0"><h2 className="truncate text-xl font-bold text-[#1E293B] dark:text-white">{detail?.learner.fullName || filteredLearners.find(s => s.id === selectedId)?.fullName || 'Learner record'}</h2><p className="mt-1 text-sm text-slate-500">{detail?.learner.className || filteredLearners.find(s => s.id === selectedId)?.className} · Learner ID: {selectedId}</p></div>
+              <button type="button" onClick={exportReport} disabled={!detail || detailLoading} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-[#B91C1C] hover:bg-red-800 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50 cursor-pointer"><Download size={15}/> Download Report (PDF)</button>
+            </div>
+            <div className="mt-4 flex gap-5 overflow-x-auto border-b border-slate-200 dark:border-slate-800 no-scrollbar">{tabs.map(t => { const Icon = t.icon; return <button key={t.id} type="button" onClick={() => setTab(t.id)} className={'inline-flex shrink-0 items-center gap-2 border-b-2 pb-2.5 text-xs font-bold transition-colors cursor-pointer ' + (tab === t.id ? 'border-[#B91C1C] text-[#B91C1C]' : 'border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-white')}><Icon size={15}/>{t.label}</button>; })}</div>
+            {detailLoading ? (
+              <div className="pt-4">
+                <DocumentReaderSkeleton />
+              </div>
+            ) : detail ? <div className="pt-4">
+              {tab === 'overview' && <div className="space-y-4">
+                <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 dark:divide-slate-800">
+                  {[
+                    ['Assignments', categorizedWork.assignments.length],
+                    ['Activities', categorizedWork.activities.length],
+                    ['Tests', categorizedWork.tests.length + detail.assessments.length],
+                    ['Assessments', categorizedWork.examinations.length],
+                    ['Attendance rate', detail.summary.attendanceRate === null ? '—' : detail.summary.attendanceRate.toFixed(1) + '%']
+                  ].map(([label, value]) => <div key={String(label)} className="p-3.5"><p className="text-[11px] text-slate-500">{label}</p><p className="mt-1 text-lg font-bold text-[#1E293B] dark:text-white tabular-nums">{value}</p></div>)}
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Separate denominators are preserved across Assignments, Activities, Tests, and Assessments so ungraded practice and different point scales are never mixed into a misleading composite score.
+                </p>
+                <h3 className="font-bold text-[#1E293B] dark:text-white">Recent academic work &amp; results</h3>
+                {[
+                  ...categorizedWork.assignments.map(a => ({ id: 'asg-' + a.id, title: a.title, subject: a.subject, date: a.submittedAt || a.dueDate, score: scoreLabel(a.grade, a.maxPoints), status: `Assignment · ${a.status}` })),
+                  ...detail.assessments.map(a => ({ id: 'aca-' + a.id, title: a.title, subject: a.subject, date: a.updatedAt || a.createdAt, score: scoreLabel(a.score, 100), status: `Assessment (${a.assessmentType})` })),
+                  ...detail.examinations.map(a => ({ id: 'exm-' + a.id, title: a.title, subject: a.subject, date: a.submittedAt, score: scoreLabel(a.score, a.maxScore, a.isUngradedActivity), status: `${normalizeWorkType(a.workType) === 'EXAMINATION' ? 'ASSESSMENT' : normalizeWorkType(a.workType)} · ${a.status}` }))
+                ].sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).slice(0, 10).map(a => <div key={a.id} className="flex flex-col gap-1 border-b border-slate-100 dark:border-slate-800 py-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-bold">{a.title}</p><p className="text-xs text-slate-500">{a.subject} · {dateLabel(a.date)} · {a.status}</p></div><span className="text-sm font-black text-brand-red">{a.score}</span></div>)}
+                {!categorizedWork.assignments.length && !detail.assessments.length && !detail.examinations.length && <p className="py-6 text-sm text-slate-500">No assignments, activities, tests, or assessment results have been recorded for this learner yet.</p>}
+              </div>}
+              {tab === 'assignments' && <div className="space-y-4">
+                <h3 className="font-black">Assignments</h3>
+                {categorizedWork.assignments.length ? <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800"><table className="w-full min-w-[540px] text-left text-sm"><thead className="bg-slate-50 dark:bg-white/5 text-xs text-slate-500"><tr><th className="p-3">Assignment</th><th className="p-3">Due / Submitted</th><th className="p-3">Status</th><th className="p-3">Marks</th></tr></thead><tbody>{categorizedWork.assignments.map(a => <tr key={a.id} className="border-t border-slate-100 dark:border-slate-800"><td className="p-3"><p className="font-bold">{a.title}</p><p className="text-xs text-slate-500">{a.subject}</p>{a.feedback && <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Feedback: {a.feedback}</p>}</td><td className="p-3">{dateLabel(a.submittedAt || a.dueDate)}</td><td className="p-3 capitalize">{String(a.status || '').replace(/_/g, ' ').toLowerCase()}</td><td className="p-3 font-bold">{scoreLabel(a.grade, a.maxPoints)}</td></tr>)}</tbody></table></div> : <p className="rounded-2xl bg-slate-50 dark:bg-white/5 p-6 text-sm text-slate-500">No assignments recorded for this learner yet.</p>}
+              </div>}
+              {tab === 'activities' && <div className="space-y-6">
+                <div>
+                  <h3 className="mb-3 font-black">Learning activities</h3>
+                  {categorizedWork.activities.length ? <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800"><table className="w-full min-w-[540px] text-left text-sm"><thead className="bg-slate-50 dark:bg-white/5 text-xs text-slate-500"><tr><th className="p-3">Activity</th><th className="p-3">Completed</th><th className="p-3">Status</th><th className="p-3">Outcome</th></tr></thead><tbody>{categorizedWork.activities.map(a => <tr key={a.id} className="border-t border-slate-100 dark:border-slate-800"><td className="p-3"><p className="font-bold">{a.title}</p><p className="text-xs text-slate-500">{a.subject}</p></td><td className="p-3">{dateLabel(a.submittedAt)}</td><td className="p-3 capitalize">{a.status.replace(/_/g, ' ')}</td><td className="p-3 font-bold">{scoreLabel(a.score, a.maxScore, a.isUngradedActivity)}</td></tr>)}</tbody></table></div> : <p className="rounded-2xl bg-slate-50 dark:bg-white/5 p-6 text-sm text-slate-500">No learning activities recorded for this learner yet.</p>}
+                </div>
+                {detail.activities.length > 0 && <div><h3 className="mb-3 font-black">Portal activity timeline</h3><div className="space-y-3">{detail.activities.map(a => <article key={a.id} className="relative rounded-2xl border border-slate-200 dark:border-slate-800 p-4"><div className="flex items-start gap-3"><span className="mt-0.5 rounded-xl bg-brand-red/10 p-2 text-brand-red"><Activity size={16}/></span><div className="min-w-0 flex-1"><p className="text-sm font-bold">{a.message}</p><p className="mt-1 text-xs text-slate-500">{dateLabel(a.createdAt)} · {a.type} · {a.actorRole || 'Recorded activity'}</p>{a.route && <p className="mt-1 break-all text-xs text-slate-500">{a.route}</p>}</div></div></article>)}</div></div>}
+              </div>}
+              {tab === 'tests' && <div className="space-y-6">
+                <div>
+                  <h3 className="mb-3 font-black">Question-based tests</h3>
+                  {categorizedWork.tests.length ? <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800"><table className="w-full min-w-[540px] text-left text-sm"><thead className="bg-slate-50 dark:bg-white/5 text-xs text-slate-500"><tr><th className="p-3">Test</th><th className="p-3">Submitted</th><th className="p-3">Status</th><th className="p-3">Score</th></tr></thead><tbody>{categorizedWork.tests.map(a => <tr key={a.id} className="border-t border-slate-100 dark:border-slate-800"><td className="p-3"><p className="font-bold">{a.title}</p><p className="text-xs text-slate-500">{a.subject}</p></td><td className="p-3">{dateLabel(a.submittedAt)}</td><td className="p-3 capitalize">{a.status.replace(/_/g, ' ')}</td><td className="p-3 font-bold">{scoreLabel(a.score, a.maxScore)}</td></tr>)}</tbody></table></div> : <p className="rounded-2xl bg-slate-50 dark:bg-white/5 p-6 text-sm text-slate-500">No question-based tests recorded.</p>}
+                </div>
+                <div>
+                  <h3 className="mb-3 font-black">Tutor academic assessments (out of 100)</h3>
+                  {detail.assessments.length ? <div className="space-y-2">{detail.assessments.map(a => <article key={a.id} className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4"><div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div><h4 className="font-bold">{a.title}</h4><p className="mt-1 text-xs text-slate-500">{a.subject} · {a.assessmentType} · {dateLabel(a.updatedAt || a.createdAt)}</p></div><span className="font-black text-brand-red">{scoreLabel(a.score, 100)}</span></div>{a.feedback && <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{a.feedback}</p>}</article>)}</div> : <p className="rounded-2xl bg-slate-50 dark:bg-white/5 p-6 text-sm text-slate-500">No tutor academic assessments recorded.</p>}
+                </div>
+              </div>}
+              {tab === 'examinations' && <div className="space-y-4">
+                <h3 className="font-black">Assessment History</h3>
+                {categorizedWork.examinations.length ? <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800"><table className="w-full min-w-[540px] text-left text-sm"><thead className="bg-slate-50 dark:bg-white/5 text-xs text-slate-500"><tr><th className="p-3">Assessment</th><th className="p-3">Submitted</th><th className="p-3">Status</th><th className="p-3">Score</th></tr></thead><tbody>{categorizedWork.examinations.map(a => <tr key={a.id} className="border-t border-slate-100 dark:border-slate-800"><td className="p-3"><p className="font-bold">{a.title}</p><p className="text-xs text-slate-500">{a.subject}</p></td><td className="p-3">{dateLabel(a.submittedAt)}</td><td className="p-3 capitalize">{a.status.replace(/_/g, ' ')}</td><td className="p-3 font-bold">{scoreLabel(a.score, a.maxScore)}</td></tr>)}</tbody></table></div> : <p className="rounded-2xl bg-slate-50 dark:bg-white/5 p-6 text-sm text-slate-500">No assessment attempts recorded.</p>}
+              </div>}
+              {tab === 'attendance' && <div><h3 className="mb-3 font-black">Attendance history</h3>{detail.attendance.length ? <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800"><table className="w-full min-w-[420px] text-left text-sm"><thead className="bg-slate-50 dark:bg-white/5 text-xs text-slate-500"><tr><th className="p-3">Date</th><th className="p-3">Class</th><th className="p-3">Status</th><th className="p-3">Notes</th></tr></thead><tbody>{detail.attendance.map(a => <tr key={a.id} className="border-t border-slate-100 dark:border-slate-800"><td className="p-3">{dateLabel(a.date)}</td><td className="p-3">{a.className || detail.learner.className}</td><td className="p-3">{a.status}</td><td className="p-3">{a.notes || '—'}</td></tr>)}</tbody></table></div> : <p className="rounded-2xl bg-slate-50 dark:bg-white/5 p-6 text-sm text-slate-500">No attendance records recorded.</p>}</div>}
+            </div> : <p className="py-8 text-sm text-slate-500">Learner details are unavailable.</p>}
+          </>}
+        </div>
+      </div>}
+    </section>
+  </div>;
+};
+
+export default SchoolLearnerInsights;

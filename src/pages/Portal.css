@@ -1,0 +1,1274 @@
+/* =========================================================
+   JAYSTARBLISS STUDIOS — ACADEMY & CLIENT CYBER PORTAL
+   ========================================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap');
+
+.jdh-portal {
+  --mono: 'Space Mono', monospace;
+  --sans: 'Plus Jakarta Sans', sans-serif;
+  --cr: #ff2e00;
+  --r: 20px;
+  
+  font-family: var(--sans);
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2.2rem 1.5rem;
+  position: relative;
+  overflow-x: hidden;
+  transition: color 0.3s ease;
+  background: transparent;
+}
+
+.jdh-portal-bg-viewport {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.jdh-portal-bg-viewport img {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+}
+
+.jdh-portal-bg-viewport .bg-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  background: radial-gradient(circle at 50% 50%, rgba(3, 7, 18, 0.12) 0%, rgba(3, 7, 18, 0.45) 100%);
+}
+
+/* ========================================================= */
+/* 1. DARK THEME — SLEEK OBSIDIAN BLACK & LASER RED + WHITE TEXT */
+/* ========================================================= */
+.jdh-portal.dark,
+.dark .jdh-portal {
+  --bg: transparent;
+  --surface: #0a0a0a;
+  --surf2: #121212;
+  --border: rgba(148, 163, 184, 0.25);
+  --border2: rgba(148, 163, 184, 0.42);
+  --text: #ffffff;
+  --text-dim: #ffffff;
+  --muted: #ffffff;
+  --dim: #ffffff;
+  --link: #f87171;
+  
+  background: transparent;
+}
+
+.jdh-portal.dark::after,
+.dark .jdh-portal::after,
+.jdh-portal.dark::before,
+.dark .jdh-portal::before {
+  display: none !important;
+}
+
+.jdh-portal.dark .scanlines,
+.dark .jdh-portal .scanlines {
+  position: absolute; inset: 0; pointer-events: none; z-index: 1;
+  background: linear-gradient(rgba(0,0,0,0) 50%, rgba(0,0,0,0.15) 50%);
+  background-size: 100% 3px; opacity: 0.15;
+}
+
+.jdh-portal.dark .card:not(.glass-modal-card),
+.dark .jdh-portal .card:not(.glass-modal-card) {
+  position: relative; z-index: 2; display: flex; width: 100%; max-width: 1140px; min-height: 640px;
+  border-radius: var(--r); overflow: hidden; border: 1.5px solid var(--border2);
+  background: rgba(10, 10, 10, 0.96);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 0 0 1px rgba(255, 46, 0, 0.2), 0 32px 90px rgba(0, 0, 0, 0.95), 0 0 65px rgba(255, 46, 0, 0.22);
+  animation: cardIn 0.55s cubic-bezier(0.22,1,0.36,1) both;
+}
+
+.jdh-portal.dark .deco-panel,
+.dark .jdh-portal .deco-panel {
+  width: 48%; flex-shrink: 0; 
+  background: linear-gradient(180deg, #000000 0%, #060101 40%, #0d0202 75%, #180302 100%);
+  position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between;
+  padding: 2.4rem 2.2rem; border-right: 1.5px solid var(--border2);
+}
+
+.jdh-portal.dark .form-panel,
+.dark .jdh-portal .form-panel { 
+  flex: 1; width: 52%; background: #0a0a0a; display: flex; flex-direction: column; 
+  overflow-y: auto; transition: background 0.3s; 
+}
+
+.jdh-portal.dark .role-tabs,
+.dark .jdh-portal .role-tabs { 
+  display: flex; border-bottom: 1.5px solid var(--border); flex-shrink: 0; background: #060606; 
+}
+.jdh-portal.dark .role-tab,
+.dark .jdh-portal .role-tab {
+  flex: 1; padding: 1.15rem 0.65rem 1rem; font-family: var(--mono); font-size: 0.62rem; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.08em; color: #ffffff; opacity: 0.88; background: none; border: none;
+  cursor: pointer; border-bottom: 2.5px solid transparent; margin-bottom: -1.5px; transition: all 0.2s;
+  display: flex; flex-direction: column; align-items: center; gap: 0.45rem;
+}
+.jdh-portal.dark .role-tab .tab-ico,
+.dark .jdh-portal .role-tab .tab-ico { display: flex; align-items: center; justify-content: center; opacity: 0.9; color: #ffffff; }
+.jdh-portal.dark .role-tab:hover,
+.dark .jdh-portal .role-tab:hover { opacity: 1; color: #ffffff; background: rgba(255, 46, 0, 0.12); }
+.jdh-portal.dark .role-tab.active,
+.dark .jdh-portal .role-tab.active { 
+  color: #ffffff; border-bottom-color: #ff2e00; background: rgba(255, 46, 0, 0.14); opacity: 1;
+}
+.jdh-portal.dark .role-tab.active .tab-ico,
+.dark .jdh-portal .role-tab.active .tab-ico { opacity: 1; color: #ff3b14; }
+
+.jdh-portal.dark .form-title,
+.dark .jdh-portal .form-title { 
+  font-family: var(--sans); font-size: 1.45rem; font-weight: 800; color: #ffffff; 
+  margin-top: 0.25rem; margin-bottom: 0.5rem; line-height: 1.15; letter-spacing: -0.01em; 
+}
+.jdh-portal.dark .form-title em,
+.dark .jdh-portal .form-title em { 
+  color: #ff2e00; font-style: normal; text-shadow: 0 0 14px rgba(255, 46, 0, 0.55);
+}
+.jdh-portal.dark .form-sub,
+.dark .jdh-portal .form-sub { font-size: 0.86rem; color: #ffffff; margin-bottom: 1.85rem; opacity: 0.95; }
+
+.jdh-portal.dark .field label,
+.dark .jdh-portal .field label { 
+  display: block; margin-bottom: 0.45rem; font-family: var(--mono); font-size: 0.64rem; 
+  font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #ff3b14; 
+}
+
+.jdh-portal.dark .input-icon,
+.dark .jdh-portal .input-icon {
+  color: #ff3b14; opacity: 0.9;
+}
+
+.jdh-portal.dark .field input,
+.dark .jdh-portal .field input {
+  width: 100%; padding: 0.82rem 1rem 0.82rem 2.75rem; background: rgba(16, 16, 16, 0.95); 
+  border: 1px solid rgba(255, 46, 0, 0.35);
+  border-radius: 10px; color: #ffffff; font-family: var(--sans); font-size: 0.88rem; 
+  outline: none !important; transition: all 0.2s ease;
+  box-shadow: inset 0 2px 6px rgba(0,0,0,0.6);
+}
+.jdh-portal.dark .field input:focus,
+.dark .jdh-portal .field input:focus { 
+  border-color: #ff2e00 !important; 
+  box-shadow: 0 0 18px rgba(255, 46, 0, 0.4), inset 0 0 8px rgba(255, 46, 0, 0.15) !important;
+  background: rgba(22, 22, 22, 0.98);
+}
+.jdh-portal.dark .field input::placeholder,
+.dark .jdh-portal .field input::placeholder { color: rgba(255, 255, 255, 0.6); }
+
+.jdh-portal.dark .pw-eye,
+.dark .jdh-portal .pw-eye { 
+  color: #ffffff; opacity: 0.85; 
+}
+.jdh-portal.dark .pw-eye:hover,
+.dark .jdh-portal .pw-eye:hover { color: #ff3b14; opacity: 1; }
+
+.jdh-portal.dark .auth-divider,
+.dark .jdh-portal .auth-divider { 
+  color: #ffffff; opacity: 0.9; 
+}
+.jdh-portal.dark .auth-divider::before,
+.jdh-portal.dark .auth-divider::after,
+.dark .jdh-portal .auth-divider::before,
+.dark .jdh-portal .auth-divider::after { 
+  background: rgba(255, 46, 0, 0.3); 
+}
+
+.jdh-portal.dark .toggle-link,
+.dark .jdh-portal .toggle-link { color: #ffffff; }
+.jdh-portal.dark .toggle-link button,
+.dark .jdh-portal .toggle-link button { color: #ff3b14; }
+.jdh-portal.dark .toggle-link button:hover,
+.dark .jdh-portal .toggle-link button:hover { color: #ff6a40; }
+.jdh-portal.dark .toggle-link a,
+.dark .jdh-portal .toggle-link a { 
+  color: #ff2e00; text-shadow: 0 0 10px rgba(255, 46, 0, 0.45);
+}
+.jdh-portal.dark .toggle-link a:hover,
+.dark .jdh-portal .toggle-link a:hover { color: #ff6a40; }
+
+.jdh-portal.dark .form-foot,
+.dark .jdh-portal .form-foot {
+  background: #060606; border-top: 1.5px solid var(--border);
+}
+.jdh-portal.dark .back-link,
+.dark .jdh-portal .back-link { 
+  color: #ffffff; 
+}
+.jdh-portal.dark .back-link:hover,
+.dark .jdh-portal .back-link:hover { 
+  color: #ffffff; background: rgba(255, 46, 0, 0.25); 
+}
+.jdh-portal.dark .theme-btn,
+.dark .jdh-portal .theme-btn {
+  background: rgba(255, 46, 0, 0.12); border: 1px solid rgba(255, 46, 0, 0.35); color: #ffffff;
+}
+.jdh-portal.dark .theme-btn:hover,
+.dark .jdh-portal .theme-btn:hover { 
+  border-color: #ff2e00; color: #ffffff; background: rgba(255, 46, 0, 0.3); 
+}
+
+.jdh-portal.dark .google-btn,
+.dark .jdh-portal .google-btn {
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255, 46, 0, 0.35); color: #ffffff;
+}
+.jdh-portal.dark .google-btn:hover:not(:disabled),
+.dark .jdh-portal .google-btn:hover:not(:disabled) { 
+  background: rgba(255, 46, 0, 0.15); border-color: rgba(255, 46, 0, 0.6); 
+  box-shadow: 0 0 18px rgba(255, 46, 0, 0.3);
+}
+
+/* ========================================================= */
+/* 2. LIGHT THEME — JAYSTARBLISS NAVY & CRIMSON DAYLIGHT     */
+/* ========================================================= */
+.jdh-portal.light,
+html:not(.dark) .jdh-portal {
+  --bg: transparent;
+  --surface: #ffffff;
+  --surf2: #f1f5f9;
+  --border: rgba(30, 41, 59, 0.16);
+  --border2: rgba(30, 41, 59, 0.28);
+  --text: #ffffff;
+  --text-dim: #e2e8f0;
+  --muted: #cbd5e1;
+  --dim: #94a3b8;
+  --link: #b91c1c;
+  
+  background: transparent;
+}
+
+.jdh-portal.light::after,
+html:not(.dark) .jdh-portal::after,
+.jdh-portal.light::before,
+html:not(.dark) .jdh-portal::before {
+  display: none !important;
+}
+
+.jdh-portal.light .scanlines,
+html:not(.dark) .jdh-portal .scanlines {
+  display: none;
+}
+
+.jdh-portal.light .card:not(.glass-modal-card),
+html:not(.dark) .jdh-portal .card:not(.glass-modal-card) {
+  position: relative; z-index: 2; display: flex; width: 100%; max-width: 1140px; min-height: 640px;
+  border-radius: var(--r); overflow: hidden; border: 1.5px solid var(--border2);
+  background: #ffffff;
+  box-shadow: 0 0 0 1px rgba(30, 41, 59, 0.08), 0 24px 60px rgba(15, 23, 42, 0.12);
+  animation: cardIn 0.55s cubic-bezier(0.22,1,0.36,1) both;
+}
+
+.jdh-portal.light .deco-panel,
+html:not(.dark) .jdh-portal .deco-panel {
+  width: 48%; flex-shrink: 0; 
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 45%, #e2e8f0 100%);
+  position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between;
+  padding: 2.4rem 2.2rem; border-right: 1.5px solid var(--border2);
+}
+
+.jdh-portal.light .form-panel,
+html:not(.dark) .jdh-portal .form-panel { 
+  flex: 1; width: 52%; background: #ffffff; display: flex; flex-direction: column; 
+  overflow-y: auto; transition: background 0.3s; 
+}
+
+.jdh-portal.light .role-tabs,
+html:not(.dark) .jdh-portal .role-tabs { 
+  display: flex; border-bottom: 1.5px solid var(--border); flex-shrink: 0; background: #f8fafc; 
+}
+.jdh-portal.light .role-tab,
+html:not(.dark) .jdh-portal .role-tab {
+  flex: 1; padding: 1.15rem 0.65rem 1rem; font-family: var(--mono); font-size: 0.62rem; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.08em; color: #475569; opacity: 0.9; background: none; border: none;
+  cursor: pointer; border-bottom: 2.5px solid transparent; margin-bottom: -1.5px; transition: all 0.2s;
+  display: flex; flex-direction: column; align-items: center; gap: 0.45rem;
+}
+.jdh-portal.light .role-tab .tab-ico,
+html:not(.dark) .jdh-portal .role-tab .tab-ico { display: flex; align-items: center; justify-content: center; opacity: 0.85; color: #475569; }
+.jdh-portal.light .role-tab:hover,
+html:not(.dark) .jdh-portal .role-tab:hover { opacity: 1; color: #1e293b; background: rgba(30, 41, 59, 0.05); }
+.jdh-portal.light .role-tab.active,
+html:not(.dark) .jdh-portal .role-tab.active { 
+  color: #1e293b; border-bottom-color: #b91c1c; background: rgba(185, 28, 28, 0.06); opacity: 1;
+}
+.jdh-portal.light .role-tab.active .tab-ico,
+html:not(.dark) .jdh-portal .role-tab.active .tab-ico { opacity: 1; color: #b91c1c; }
+
+.jdh-portal.light .form-title,
+html:not(.dark) .jdh-portal .form-title { 
+  font-family: var(--sans); font-size: 1.45rem; font-weight: 800; color: #0f172a; 
+  margin-top: 0.25rem; margin-bottom: 0.5rem; line-height: 1.15; letter-spacing: -0.01em; 
+}
+.jdh-portal.light .form-title em,
+html:not(.dark) .jdh-portal .form-title em { 
+  color: #b91c1c; font-style: normal; text-shadow: none;
+}
+.jdh-portal.light .form-sub,
+html:not(.dark) .jdh-portal .form-sub { font-size: 0.86rem; color: #334155; margin-bottom: 1.85rem; opacity: 0.95; }
+
+.jdh-portal.light .field label,
+html:not(.dark) .jdh-portal .field label { 
+  display: block; margin-bottom: 0.45rem; font-family: var(--mono); font-size: 0.64rem; 
+  font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #1e293b; 
+}
+
+.jdh-portal.light .input-icon,
+html:not(.dark) .jdh-portal .input-icon {
+  color: #64748b; opacity: 0.9;
+}
+
+.jdh-portal.light .field input,
+html:not(.dark) .jdh-portal .field input {
+  width: 100%; padding: 0.82rem 1rem 0.82rem 2.75rem; background: #ffffff; 
+  border: 1.5px solid #cbd5e1;
+  border-radius: 10px; color: #0f172a; font-family: var(--sans); font-size: 0.88rem; 
+  outline: none !important; transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+.jdh-portal.light .field input:focus,
+html:not(.dark) .jdh-portal .field input:focus { 
+  border-color: #b91c1c !important; 
+  box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.14), 0 1px 3px rgba(15, 23, 42, 0.06) !important;
+  background: #ffffff;
+}
+.jdh-portal.light .field input::placeholder,
+html:not(.dark) .jdh-portal .field input::placeholder { color: #94a3b8; }
+
+.jdh-portal.light .pw-eye,
+html:not(.dark) .jdh-portal .pw-eye { 
+  color: #64748b; opacity: 0.85; 
+}
+.jdh-portal.light .pw-eye:hover,
+html:not(.dark) .jdh-portal .pw-eye:hover { color: #1e293b; opacity: 1; }
+
+.jdh-portal.light .auth-divider,
+html:not(.dark) .jdh-portal .auth-divider { 
+  color: #475569; opacity: 0.9; 
+}
+.jdh-portal.light .auth-divider::before,
+.jdh-portal.light .auth-divider::after,
+html:not(.dark) .jdh-portal .auth-divider::before,
+html:not(.dark) .jdh-portal .auth-divider::after { 
+  background: #e2e8f0; 
+}
+
+.jdh-portal.light .toggle-link,
+html:not(.dark) .jdh-portal .toggle-link { color: #334155; }
+.jdh-portal.light .toggle-link button,
+html:not(.dark) .jdh-portal .toggle-link button { color: #b91c1c; font-weight: 700; }
+.jdh-portal.light .toggle-link button:hover,
+html:not(.dark) .jdh-portal .toggle-link button:hover { color: #991b1b; }
+.jdh-portal.light .toggle-link a,
+html:not(.dark) .jdh-portal .toggle-link a { 
+  color: #b91c1c; font-weight: 700;
+}
+.jdh-portal.light .toggle-link a:hover,
+html:not(.dark) .jdh-portal .toggle-link a:hover { color: #991b1b; }
+
+.jdh-portal.light .form-foot,
+html:not(.dark) .jdh-portal .form-foot {
+  background: #f8fafc; border-top: 1.5px solid var(--border);
+}
+.jdh-portal.light .back-link,
+html:not(.dark) .jdh-portal .back-link { 
+  color: #334155; 
+}
+.jdh-portal.light .back-link:hover,
+html:not(.dark) .jdh-portal .back-link:hover { 
+  color: #1e293b; background: rgba(30, 41, 59, 0.08); 
+}
+.jdh-portal.light .theme-btn,
+html:not(.dark) .jdh-portal .theme-btn {
+  background: #ffffff; border: 1px solid #cbd5e1; color: #1e293b;
+}
+.jdh-portal.light .theme-btn:hover,
+html:not(.dark) .jdh-portal .theme-btn:hover { 
+  border-color: #1e293b; color: #0f172a; background: #f1f5f9; 
+}
+
+.jdh-portal.light .google-btn,
+html:not(.dark) .jdh-portal .google-btn {
+  background: #ffffff; border: 1.5px solid #cbd5e1; color: #0f172a;
+}
+.jdh-portal.light .google-btn:hover:not(:disabled),
+html:not(.dark) .jdh-portal .google-btn:hover:not(:disabled) { 
+  background: #f8fafc; border-color: #1e293b; 
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+/* ========================================================= */
+/* COMMON SHARED ANIMATIONS & CORE ELEMENTS                  */
+/* ========================================================= */
+@keyframes cardIn { 
+  from { opacity: 0; transform: translateY(28px) scale(0.96); } 
+  to { opacity: 1; transform: translateY(0) scale(1); } 
+}
+
+.jdh-portal .deco-brand { 
+  position: relative; z-index: 5; display: inline-flex; align-items: center; gap: 0.75rem; 
+  text-decoration: none;
+}
+
+.jdh-portal .deco-center-stage {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin: 1.2rem auto;
+  pointer-events: auto;
+}
+
+.jdh-portal .stage-glow-reflection {
+  position: absolute;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  filter: blur(24px);
+  pointer-events: none;
+  animation: pulseStageGlow 4s ease-in-out infinite alternate;
+}
+
+.jdh-portal.dark .stage-glow-reflection,
+.dark .jdh-portal .stage-glow-reflection {
+  background: radial-gradient(circle, rgba(255, 46, 0, 0.65) 0%, rgba(220, 38, 38, 0.4) 45%, rgba(185, 28, 28, 0.15) 70%, transparent 80%);
+}
+
+.jdh-portal.light .stage-glow-reflection,
+html:not(.dark) .jdh-portal .stage-glow-reflection {
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.95) 0%, rgba(226, 232, 240, 0.65) 35%, rgba(30, 41, 59, 0.14) 60%, transparent 75%);
+}
+
+@keyframes pulseStageGlow {
+  0% { transform: scale(0.92); opacity: 0.45; }
+  100% { transform: scale(1.18); opacity: 0.85; }
+}
+
+.jdh-portal .deco-bottom { position: relative; z-index: 5; }
+.jdh-portal .deco-tagline { 
+  font-family: var(--sans); font-size: 1.55rem; font-weight: 800; 
+  line-height: 1.2; letter-spacing: -0.01em; 
+}
+
+.jdh-portal.dark .deco-tagline,
+.dark .jdh-portal .deco-tagline {
+  color: #ffffff;
+}
+.jdh-portal.dark .deco-tagline span,
+.dark .jdh-portal .deco-tagline span { 
+  color: #ff2e00; 
+  text-shadow: 0 0 16px rgba(255, 46, 0, 0.7);
+}
+
+.jdh-portal.light .deco-tagline,
+html:not(.dark) .jdh-portal .deco-tagline {
+  color: #0f172a;
+}
+.jdh-portal.light .deco-tagline span,
+html:not(.dark) .jdh-portal .deco-tagline span { 
+  color: #b91c1c; 
+  text-shadow: none;
+}
+
+.jdh-portal.light .deco-brand span,
+html:not(.dark) .jdh-portal .deco-brand span {
+  color: #0f172a;
+}
+
+.jdh-portal.dark .deco-brand span,
+.dark .jdh-portal .deco-brand span {
+  color: #ffffff;
+}
+
+.jdh-portal .form-body { 
+  flex: 1; padding: 2.6rem 2.6rem; overflow-y: auto; 
+}
+.jdh-portal .pane { animation: paneIn 0.2s ease both; }
+@keyframes paneIn { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: translateX(0); } }
+
+.jdh-portal .msg { 
+  padding: 0.65rem 0.95rem; font-size: 0.74rem; margin-bottom: 1.1rem; 
+  border-left: 3px solid; border-radius: 0 6px 6px 0; line-height: 1.4; 
+  animation: shake 0.28s ease; 
+}
+.jdh-portal .msg-error { 
+  background: rgba(255,46,0,0.12); color: #ff6a50; border-color: var(--cr); 
+}
+.jdh-portal .msg-success { 
+  background: rgba(46,204,113,0.12); color: var(--green); border-color: var(--green); 
+}
+@keyframes shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
+
+.jdh-portal .field { margin-bottom: 1.2rem; }
+.jdh-portal .input-wrap { position: relative; }
+.jdh-portal .input-icon { 
+  position: absolute; left: 0.95rem; top: 50%; transform: translateY(-50%); 
+  pointer-events: none; display: flex; align-items: center; 
+}
+.jdh-portal .pw-eye { 
+  position: absolute; right: 0.85rem; top: 50%; transform: translateY(-50%); 
+  background: none; border: none; cursor: pointer; 
+  display: flex; align-items: center; padding: 0.25rem; transition: color 0.15s; 
+}
+.jdh-portal .field input.has-eye { padding-right: 2.75rem; }
+
+/* ========================================================= */
+/* CYBER LIQUID BUTTON                                       */
+/* ========================================================= */
+.jdh-portal .cyber-liquid-button {
+  position: relative;
+  width: 100%;
+  border-radius: 12px;
+  border: 1.5px solid #ff2e00;
+  background: #150201;
+  box-shadow: 0 0 24px rgba(255, 46, 0, 0.55), inset 0 0 16px rgba(255, 60, 20, 0.4);
+  cursor: pointer;
+  margin-top: 0.6rem;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.jdh-portal .cyber-liquid-button:hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.008);
+  border-color: #ff5e36;
+  box-shadow: 0 0 36px rgba(255, 60, 20, 0.8), inset 0 0 24px rgba(255, 90, 40, 0.6);
+}
+
+.jdh-portal .cyber-liquid-button:active:not(:disabled) {
+  transform: translateY(0) scale(0.995);
+}
+
+.jdh-portal .cyber-liquid-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: 0 0 10px rgba(255, 46, 0, 0.2);
+}
+
+.jdh-portal.light .cyber-liquid-button,
+html:not(.dark) .jdh-portal .cyber-liquid-button {
+  border: 1.5px solid #991b1b;
+  background: #b91c1c;
+  box-shadow: 0 6px 20px rgba(185, 28, 28, 0.28);
+}
+
+.jdh-portal.light .cyber-liquid-button:hover:not(:disabled),
+html:not(.dark) .jdh-portal .cyber-liquid-button:hover:not(:disabled) {
+  border-color: #dc2626;
+  box-shadow: 0 10px 26px rgba(185, 28, 28, 0.38);
+}
+
+.jdh-portal.light .cyber-liquid-button .btn-base-bg,
+html:not(.dark) .jdh-portal .cyber-liquid-button .btn-base-bg {
+  background: radial-gradient(ellipse at 50% 50%, #dc2626 0%, #b91c1c 60%, #7f1d1d 100%);
+}
+
+.jdh-portal.light .cyber-liquid-button .btn-liquid-waves,
+html:not(.dark) .jdh-portal .cyber-liquid-button .btn-liquid-waves {
+  background-image: 
+    radial-gradient(ellipse 65% 55% at 25% 45%, rgba(220, 38, 38, 0.9) 0%, transparent 60%),
+    radial-gradient(ellipse 55% 65% at 75% 55%, rgba(185, 28, 28, 0.9) 0%, transparent 60%),
+    radial-gradient(ellipse 90% 45% at 50% 85%, rgba(254, 202, 202, 0.45) 0%, transparent 70%);
+}
+
+.jdh-portal.light .cyber-liquid-button .btn-label-text,
+html:not(.dark) .jdh-portal .cyber-liquid-button .btn-label-text {
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(15, 23, 42, 0.45);
+}
+
+.jdh-portal .btn-base-bg {
+  background: radial-gradient(ellipse at 50% 50%, #d61800 0%, #880900 50%, #200201 100%);
+}
+
+.jdh-portal .btn-liquid-waves {
+  background-image: 
+    radial-gradient(ellipse 65% 55% at 25% 45%, rgba(255, 80, 40, 0.9) 0%, transparent 60%),
+    radial-gradient(ellipse 55% 65% at 75% 55%, rgba(255, 30, 0, 0.9) 0%, transparent 60%),
+    radial-gradient(ellipse 90% 45% at 50% 85%, rgba(255, 140, 60, 0.5) 0%, transparent 70%);
+  filter: blur(6px);
+  animation: cyberFluidWave 4.5s ease-in-out infinite alternate;
+}
+
+@keyframes cyberFluidWave {
+  0% { transform: scale(1) translate(0%, 0%) rotate(0deg); }
+  50% { transform: scale(1.18) translate(-3%, 4%) rotate(2deg); }
+  100% { transform: scale(1.1) translate(4%, -3%) rotate(-2deg); }
+}
+
+.jdh-portal .btn-shimmer {
+  background: linear-gradient(
+    105deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.28) 45%,
+    rgba(255, 255, 255, 0.45) 50%,
+    rgba(255, 255, 255, 0.28) 55%,
+    transparent 80%
+  );
+  background-size: 200% 100%;
+  animation: cyberShimmer 3.5s infinite linear;
+  opacity: 0.45;
+}
+
+@keyframes cyberShimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.jdh-portal .btn-border-glow {
+  box-shadow: inset 0 0 10px rgba(255, 200, 180, 0.35);
+}
+
+.jdh-portal .btn-label-text {
+  color: #ffffff;
+  font-family: var(--mono);
+  font-weight: 800;
+  font-size: 0.78rem;
+  letter-spacing: 0.16em;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8), 0 0 12px rgba(255, 255, 255, 0.65), 0 0 20px rgba(255, 46, 0, 0.9);
+}
+
+/* ========================================================= */
+/* GLASSMORHPIC MODAL CARDS (LOGIN & REGISTER)               */
+/* ========================================================= */
+.jdh-portal .card.glass-modal-card {
+  width: 92vw !important;
+  max-width: 420px !important;
+  min-height: auto !important;
+  max-height: 85vh !important;
+  max-height: 85dvh !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  display: flex !important;
+  flex-direction: column !important;
+  background: rgba(255, 255, 255, 0.03) !important;
+  backdrop-filter: blur(8px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(140%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  border-radius: 20px !important;
+  padding: 1.6rem 1.6rem 1.3rem 1.6rem !important;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.35) !important;
+  position: relative !important;
+  z-index: 2 !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  animation: cardIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.jdh-portal .card.glass-modal-card::-webkit-scrollbar {
+  width: 4px;
+}
+
+.jdh-portal .card.glass-modal-card::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.jdh-portal .card.glass-modal-card::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 9999px;
+}
+
+.jdh-portal .card.register-modal-card {
+  max-width: min(520px, 66.66vw) !important;
+  padding: 1.5rem 1.4rem 1.2rem 1.4rem !important;
+}
+
+.jdh-portal .glass-header h1 {
+  color: #ffffff !important;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.95);
+}
+
+.jdh-portal .glass-header span {
+  color: #ffffff !important;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.95);
+}
+
+.jdh-portal .glass-header p {
+  color: #f1f5f9 !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
+}
+
+.jdh-portal .glass-role-tabs {
+  display: flex !important;
+  gap: 5px !important;
+  padding: 4px !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  backdrop-filter: blur(4px) !important;
+  -webkit-backdrop-filter: blur(4px) !important;
+  border-radius: 12px !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+}
+
+.jdh-portal .glass-role-tab {
+  flex: 1 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 5px !important;
+  padding: 0.5rem 0.35rem !important;
+  border-radius: 8px !important;
+  font-size: 0.76rem !important;
+  font-weight: 700 !important;
+  color: #e2e8f0 !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9) !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.jdh-portal .glass-role-tab:hover {
+  color: #ffffff !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.jdh-portal .glass-role-tab.active {
+  background: #B91C1C !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  box-shadow: 0 4px 14px rgba(185, 28, 28, 0.35) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8) !important;
+}
+
+.jdh-portal .glass-input {
+  width: 100% !important;
+  padding: 0.72rem 0.85rem 0.72rem 2.4rem !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  backdrop-filter: blur(4px) !important;
+  -webkit-backdrop-filter: blur(4px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  border-radius: 10px !important;
+  color: #ffffff !important;
+  font-size: 0.88rem !important;
+  font-weight: 500 !important;
+  outline: none !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9) !important;
+}
+
+.jdh-portal .glass-input:focus {
+  border-color: rgba(185, 28, 28, 0.85) !important;
+  box-shadow: 0 0 14px rgba(185, 28, 28, 0.35), inset 0 1px 3px rgba(0, 0, 0, 0.2) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+.jdh-portal .glass-input::placeholder {
+  color: rgba(226, 232, 240, 0.6) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9) !important;
+}
+
+.jdh-portal .field label {
+  color: #ffffff !important;
+  font-size: 0.68rem !important;
+  font-weight: 700 !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95) !important;
+  letter-spacing: 0.06em !important;
+}
+
+.jdh-portal .input-icon {
+  color: #ffffff !important;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9)) !important;
+}
+
+.jdh-portal .pw-eye {
+  color: #ffffff !important;
+  opacity: 0.85;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9)) !important;
+}
+
+.jdh-portal .pw-eye:hover {
+  opacity: 1;
+  color: #ffffff !important;
+}
+
+.jdh-portal .glass-submit-btn {
+  background: #B91C1C !important;
+  border-radius: 10px !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  box-shadow: 0 6px 20px rgba(185, 28, 28, 0.45) !important;
+  cursor: pointer !important;
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6) !important;
+}
+
+.jdh-portal .glass-submit-btn:hover:not(:disabled) {
+  background: #991B1B !important;
+  transform: translateY(-1px) scale(1.01);
+  box-shadow: 0 10px 25px rgba(185, 28, 28, 0.65) !important;
+}
+
+.jdh-portal .glass-submit-btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.99);
+}
+
+.jdh-portal .glass-submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+@media (max-width: 768px) {
+  .jdh-portal {
+    min-height: 100vh !important;
+    min-height: 100dvh !important;
+    width: 100vw !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 1rem 0.75rem !important;
+    background: transparent !important;
+  }
+
+  .jdh-portal .card.glass-modal-card {
+    width: calc(100vw - 1.5rem) !important;
+    max-width: 440px !important;
+    min-width: 0 !important;
+    height: auto !important;
+    max-height: 94vh !important;
+    max-height: 94dvh !important;
+    min-height: 0 !important;
+    margin: auto !important;
+    align-self: center !important;
+    padding: 1.25rem 1.15rem 1.1rem 1.15rem !important;
+    border-radius: 20px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-start !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain !important;
+    box-sizing: border-box !important;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  }
+
+  .jdh-portal .card.glass-modal-card::-webkit-scrollbar {
+    width: 3px !important;
+  }
+
+  .jdh-portal .card.glass-modal-card::-webkit-scrollbar-track {
+    background: transparent !important;
+  }
+
+  .jdh-portal .card.glass-modal-card::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.25) !important;
+    border-radius: 9999px !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .glass-header {
+    padding-top: 0.1rem !important;
+    padding-bottom: 0.45rem !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .glass-header h1 {
+    font-size: 1.2rem !important;
+    line-height: 1.2 !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .glass-header img,
+  .jdh-portal .card.glass-modal-card .glass-header svg {
+    width: 24px !important;
+    height: 24px !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .glass-role-tabs {
+    gap: 4px !important;
+    padding: 3px !important;
+    border-radius: 10px !important;
+    margin-bottom: 0.65rem !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .glass-role-tab {
+    padding: 0.45rem 0.3rem !important;
+    font-size: 0.72rem !important;
+    border-radius: 7px !important;
+    gap: 4px !important;
+    white-space: nowrap !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .glass-role-tab svg {
+    width: 13px !important;
+    height: 13px !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .msg {
+    padding: 0.45rem 0.65rem !important;
+    font-size: 0.72rem !important;
+    margin-bottom: 0.5rem !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .field {
+    margin-bottom: 0.55rem !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .field label {
+    font-size: 0.68rem !important;
+    margin-bottom: 0.25rem !important;
+    letter-spacing: 0.04em !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .field button {
+    font-size: 0.68rem !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .glass-input {
+    padding: 0.55rem 0.75rem 0.55rem 2.2rem !important;
+    font-size: 0.84rem !important;
+    border-radius: 9px !important;
+    min-height: 40px !important;
+    height: 40px !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .input-icon {
+    left: 0.65rem !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .input-icon svg {
+    width: 14px !important;
+    height: 14px !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .pw-eye {
+    right: 0.6rem !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    padding: 2px !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .pw-eye svg {
+    width: 14px !important;
+    height: 14px !important;
+  }
+
+  .jdh-portal .card.glass-modal-card label[for="rememberMe"] {
+    font-size: 0.72rem !important;
+    gap: 5px !important;
+  }
+
+  .jdh-portal .card.glass-modal-card label[for="rememberMe"] input {
+    width: 13px !important;
+    height: 13px !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .glass-submit-btn {
+    padding: 0.6rem 0.85rem !important;
+    font-size: 0.88rem !important;
+    border-radius: 9px !important;
+    margin-top: 0.5rem !important;
+    min-height: 42px !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .auth-divider {
+    margin: 0.5rem 0 !important;
+    font-size: 0.62rem !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .google-btn {
+    padding: 0.5rem 0.75rem !important;
+    font-size: 0.78rem !important;
+    border-radius: 9px !important;
+    min-height: 38px !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .text-slate-200 {
+    font-size: 0.72rem !important;
+  }
+
+  .jdh-portal .card.glass-modal-card .drop-shadow {
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8)) !important;
+  }
+}
+
+/* Light Mode Glassmorphism Overrides */
+.jdh-portal.light .card.glass-modal-card,
+html:not(.dark) .jdh-portal .card.glass-modal-card {
+  background: rgba(255, 255, 255, 0.03) !important;
+  backdrop-filter: blur(8px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(140%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.35) !important;
+}
+
+.jdh-portal.light .glass-header h1,
+html:not(.dark) .jdh-portal .glass-header h1,
+.jdh-portal.light .glass-header span,
+html:not(.dark) .jdh-portal .glass-header span {
+  color: #ffffff !important;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.95);
+}
+
+.jdh-portal.light .glass-header p,
+html:not(.dark) .jdh-portal .glass-header p {
+  color: #f1f5f9 !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
+}
+
+.jdh-portal.light .glass-role-tabs,
+html:not(.dark) .jdh-portal .glass-role-tabs {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
+}
+
+.jdh-portal.light .glass-role-tab,
+html:not(.dark) .jdh-portal .glass-role-tab {
+  color: #e2e8f0 !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9) !important;
+}
+
+.jdh-portal.light .glass-role-tab:hover,
+html:not(.dark) .jdh-portal .glass-role-tab:hover {
+  color: #ffffff !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+.jdh-portal.light .glass-role-tab.active,
+html:not(.dark) .jdh-portal .glass-role-tab.active {
+  background: #B91C1C !important;
+  color: #ffffff !important;
+}
+
+.jdh-portal.light .glass-input,
+html:not(.dark) .jdh-portal .glass-input {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(255, 255, 255, 0.22) !important;
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9) !important;
+}
+
+.jdh-portal.light .glass-input:focus,
+html:not(.dark) .jdh-portal .glass-input:focus {
+  border-color: rgba(255, 255, 255, 0.6) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.25) !important;
+}
+
+.jdh-portal.light .glass-input::placeholder,
+html:not(.dark) .jdh-portal .glass-input::placeholder {
+  color: rgba(226, 232, 240, 0.6) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9) !important;
+}
+
+.jdh-portal.light .field label,
+html:not(.dark) .jdh-portal .field label {
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95) !important;
+}
+
+/* ========================================================= */
+/* Google and Secondary Actions                              */
+/* ========================================================= */
+.jdh-portal .google-btn {
+  width: 100%; padding: 0.8rem;
+  border-radius: 10px; font-family: var(--sans); font-size: 0.8rem; font-weight: 600; 
+  cursor: pointer; transition: all 0.2s;
+  display: flex; align-items: center; justify-content: center; gap: 0.65rem; margin-top: 0;
+}
+
+.jdh-portal .auth-divider { 
+  display: flex; align-items: center; gap: 0.75rem; margin: 1.15rem 0; 
+  font-family: var(--mono); font-size: 0.56rem; 
+  text-transform: uppercase; letter-spacing: 0.12em; 
+}
+.jdh-portal .auth-divider::before, .jdh-portal .auth-divider::after { 
+  content: ''; flex: 1; height: 1px; 
+}
+
+.jdh-portal .toggle-link { text-align: center; margin-top: 1.3rem; font-size: 0.8rem; }
+.jdh-portal .toggle-link button { 
+  background: none; border: none; cursor: pointer; 
+  font-size: 0.8rem; font-weight: 700; padding: 0; text-decoration: underline; 
+  transition: color 0.15s; 
+}
+.jdh-portal .toggle-link a { 
+  font-size: 0.8rem; font-weight: 700; text-decoration: underline; 
+  transition: color 0.15s; 
+}
+
+.jdh-portal .form-foot {
+  padding: 1rem 2.8rem; 
+  display: flex; align-items: center; justify-content: space-between;
+  flex-shrink: 0; transition: background 0.3s; min-height: 58px;
+}
+.jdh-portal .back-link { 
+  font-family: var(--mono); font-size: 0.68rem; font-weight: 700; 
+  text-decoration: none; display: flex; align-items: center; gap: 0.4rem; 
+  transition: all 0.15s; padding: 5px 10px; border-radius: 6px;
+}
+.jdh-portal .theme-btn {
+  width: 32px; height: 32px; 
+  display: grid; place-items: center; cursor: pointer; font-size: 0.85rem; 
+  border-radius: 8px; transition: all 0.15s;
+}
+
+/* ========================================================= */
+/* RESPONSIVE MEDIA QUERIES & MOBILE VIEWPORT PERFECTION     */
+/* ========================================================= */
+@media(max-width: 900px) {
+  .jdh-portal { 
+    padding: 1.25rem 1rem; 
+    min-height: 100vh;
+  }
+  
+  .jdh-portal .card:not(.glass-modal-card),
+  .jdh-portal.dark .card:not(.glass-modal-card),
+  .dark .jdh-portal .card:not(.glass-modal-card),
+  .jdh-portal.light .card:not(.glass-modal-card),
+  html:not(.dark) .jdh-portal .card:not(.glass-modal-card) { 
+    flex-direction: column !important;
+    max-width: 680px; 
+    width: 100% !important;
+    min-height: auto !important; 
+    border-radius: 18px;
+  }
+
+  .jdh-portal .deco-panel,
+  .jdh-portal.dark .deco-panel,
+  .dark .jdh-portal .deco-panel,
+  .jdh-portal.light .deco-panel,
+  html:not(.dark) .jdh-portal .deco-panel {
+    width: 100% !important;
+    min-height: 270px !important;
+    max-height: 320px !important;
+    padding: 1.6rem 1.8rem !important;
+    border-right: none !important;
+    border-bottom: 1.5px solid var(--border2) !important;
+  }
+
+  .jdh-portal .form-panel,
+  .jdh-portal.dark .form-panel,
+  .dark .jdh-portal .form-panel,
+  .jdh-portal.light .form-panel,
+  html:not(.dark) .jdh-portal .form-panel {
+    width: 100% !important;
+    flex: 1 1 auto !important;
+  }
+}
+
+@media(max-width: 640px) {
+  .jdh-portal:not(:has(.glass-modal-card)) { 
+    padding: 0 !important; 
+    align-items: stretch !important;
+    background: var(--bg) !important;
+  }
+  
+  .jdh-portal .card:not(.glass-modal-card),
+  .jdh-portal.dark .card:not(.glass-modal-card),
+  .dark .jdh-portal .card:not(.glass-modal-card),
+  .jdh-portal.light .card:not(.glass-modal-card),
+  html:not(.dark) .jdh-portal .card:not(.glass-modal-card) { 
+    flex-direction: column !important; 
+    max-width: 100vw !important; 
+    width: 100vw !important; 
+    min-height: 100dvh !important; 
+    border-radius: 0 !important; 
+    border-left: none !important; 
+    border-right: none !important; 
+    border-top: none !important;
+    box-shadow: none !important;
+  }
+
+  .jdh-portal .deco-panel,
+  .jdh-portal.dark .deco-panel,
+  .dark .jdh-portal .deco-panel,
+  .jdh-portal.light .deco-panel,
+  html:not(.dark) .jdh-portal .deco-panel { 
+    width: 100% !important; 
+    min-height: 220px !important; 
+    max-height: 250px !important;
+    padding: 1.25rem 1.25rem 1rem !important; 
+    border-right: none !important; 
+    border-bottom: 1.5px solid var(--border) !important; 
+  }
+
+  .jdh-portal .deco-center-stage {
+    margin: 0.2rem auto !important;
+  }
+
+  .jdh-portal .deco-tagline {
+    font-size: 1.15rem !important;
+    line-height: 1.15 !important;
+  }
+
+  .jdh-portal .role-tabs,
+  .jdh-portal.dark .role-tabs,
+  .dark .jdh-portal .role-tabs,
+  .jdh-portal.light .role-tabs,
+  html:not(.dark) .jdh-portal .role-tabs {
+    display: grid !important;
+    grid-template-columns: repeat(4, 1fr) !important;
+    width: 100% !important;
+  }
+
+  .jdh-portal .role-tab,
+  .jdh-portal.dark .role-tab,
+  .dark .jdh-portal .role-tab,
+  .jdh-portal.light .role-tab,
+  html:not(.dark) .jdh-portal .role-tab {
+    padding: 0.75rem 0.2rem 0.65rem !important;
+    font-size: 0.56rem !important;
+    letter-spacing: 0.04em !important;
+    gap: 0.25rem !important;
+    text-align: center !important;
+  }
+
+  .jdh-portal .form-panel,
+  .jdh-portal.dark .form-panel,
+  .dark .jdh-portal .form-panel,
+  .jdh-portal.light .form-panel,
+  html:not(.dark) .jdh-portal .form-panel { 
+    width: 100% !important; 
+    flex: 1 1 auto !important; 
+  }
+
+  .jdh-portal .form-body { 
+    padding: 1.5rem 1.25rem 1.75rem !important; 
+  }
+
+  .jdh-portal .form-title {
+    font-size: 1.35rem !important;
+    margin-bottom: 0.35rem !important;
+  }
+
+  .jdh-portal .form-sub {
+    font-size: 0.82rem !important;
+    margin-bottom: 1.4rem !important;
+  }
+
+  .jdh-portal .field input {
+    font-size: 0.88rem !important;
+    padding-top: 0.78rem !important;
+    padding-bottom: 0.78rem !important;
+  }
+
+  .jdh-portal .form-foot { 
+    padding: 0.85rem 1.25rem 1.25rem !important; 
+  }
+}

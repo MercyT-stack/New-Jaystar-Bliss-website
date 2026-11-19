@@ -1,0 +1,11 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // All media uploads are handled through Cloudinary in the application.
+    // Firebase Storage is intentionally closed until a server-authorized upload
+    // path is introduced.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
